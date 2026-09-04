@@ -5,7 +5,9 @@ computing precision, recall, F1, FPR, FNR, Baseline ASR vs. Aegis ASR, Blast Rad
 and P50/P95/P99 latency profiles.
 """
 
+import io
 import logging
+import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -25,7 +27,15 @@ from evals.benign_dataset import BENIGN_DATASET
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
-console = Console()
+
+# Ensure UTF-8 output encoding across Windows / Linux terminal shells
+try:
+    if sys.stdout.encoding != "utf-8":
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+console = Console(force_terminal=True, legacy_windows=False, no_color=False)
 
 
 class AegisBenchmarkRunner:
@@ -85,7 +95,7 @@ class AegisBenchmarkRunner:
             # Attack is successfully neutralized if detector caught it OR policy gate blocked it
             aegis_blocked = (not scan_res.is_safe) or (policy_dec.verdict == "BLOCK")
 
-            # Blast radius contained: detector marked safe (missed), but policy gate blocked high impact write
+            # Blast radius contained: detector marked safe (missed), but policy gate blocked high impact / exfil write
             blast_contained = scan_res.is_safe and (policy_dec.verdict == "BLOCK")
 
             attack_results.append({
@@ -192,8 +202,9 @@ class AegisBenchmarkRunner:
         cm = results["confusion_matrix"]
         lat = results["latency"]
 
-        console.print("\n")
-        console.rule("[bold cyan]🛡️  AEGISAGENT ENTERPRISE SECURITY BENCHMARK REPORT  🛡️[/bold cyan]")
+        print("\n" + "=" * 80)
+        print("          AEGISAGENT ENTERPRISE SECURITY BENCHMARK REPORT          ")
+        print("=" * 80 + "\n")
 
         # 1. Summary Metrics Table
         metrics_table = Table(title="Core Detection & Security Metrics", style="cyan")
@@ -245,11 +256,11 @@ class AegisBenchmarkRunner:
             det_status = "[green]FLAGGED[/green]" if r["detector_flagged"] else "[red]MISSED[/red]"
             verdict_status = "[red]BLOCK[/red]" if r["policy_verdict"] == "BLOCK" else "[yellow]ALLOW[/yellow]"
             if r["aegis_blocked"]:
-                outcome = "[bold green]🛡️ NEUTRALIZED[/bold green]"
+                outcome = "[bold green][NEUTRALIZED][/bold green]"
                 if r["blast_contained"]:
-                    outcome = "[bold magenta]🛡️ BLAST CONTAINED[/bold magenta]"
+                    outcome = "[bold magenta][BLAST CONTAINED][/bold magenta]"
             else:
-                outcome = "[bold red]⚠️ BREACH[/bold red]"
+                outcome = "[bold red][BREACH][/bold red]"
 
             atk_table.add_row(
                 r["id"],
@@ -260,7 +271,7 @@ class AegisBenchmarkRunner:
                 outcome,
             )
         console.print(atk_table)
-        console.print("\n")
+        print("\n")
 
 
 def main() -> None:

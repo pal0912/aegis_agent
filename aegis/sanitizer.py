@@ -1,12 +1,12 @@
 """Context sanitizer and passive XML encapsulation layer for AegisAgent.
 
 Strips executable HTML tags, dangerous embedded media, and Markdown image exfiltration payloads,
-strictly encapsulating third-party untrusted data within passive boundaries.
+escapes internal XML boundary collision tokens, and strictly encapsulates third-party untrusted data.
 """
 
 import hashlib
 import re
-from typing import Optional
+from typing import Any, Optional
 
 
 class ContextSanitizer:
@@ -35,6 +35,14 @@ class ContextSanitizer:
         # Markdown image exfiltration pattern: ![alt](url)
         self._md_image_regex = re.compile(r"!\[.*?\]\(.*?\)")
 
+        # Escape patterns for XML delimiter breakout prevention
+        self._closing_tag_breakout_regex = re.compile(
+            r"<\s*/\s*untrusted_context\s*>", re.IGNORECASE
+        )
+        self._opening_tag_breakout_regex = re.compile(
+            r"<\s*untrusted_context\b[^>]*>", re.IGNORECASE
+        )
+
     def strip_dangerous_tags(self, text: str) -> str:
         """Remove dangerous HTML tags and Markdown image exfiltration payloads.
 
@@ -53,8 +61,30 @@ class ContextSanitizer:
         cleaned = self._md_image_regex.sub("", cleaned)
         return cleaned
 
-    def sanitize_and_encapsulate(self, text: str, source_label: str) -> str:
-        """Sanitize text and strictly encapsulate it inside untrusted context boundaries.
+    def escape_boundary_breakouts(self, text: str) -> str:
+        """Neutralize malicious boundary delimiter injections.
+
+        Prevents attacker payload from closing <untrusted_context> early or forging nested boundaries.
+
+        Args:
+            text: Ingested payload string.
+
+        Returns:
+            Text with escaped XML boundary tags.
+        """
+        if not text:
+            return ""
+        # Neutralize forged opening and closing delimiter tags
+        safe_text = self._closing_tag_breakout_regex.sub(
+            "&lt;/untrusted_context&gt;", text
+        )
+        safe_text = self._opening_tag_breakout_regex.sub(
+            "&lt;untrusted_context_escaped&gt;", safe_text
+        )
+        return safe_text
+
+    def sanitize_and_encapsulate(self, text: Any, source_label: str) -> str:
+        """Sanitize text, escape boundary breakouts, and encapsulate inside untrusted context.
 
         Args:
             text: Third-party context string (e.g. from web, PDF, email, API).
@@ -63,17 +93,18 @@ class ContextSanitizer:
         Returns:
             Encapsulated passive context string.
         """
-        raw_text = text if text is not None else ""
+        raw_text = str(text) if text is not None else ""
         cleaned_text = self.strip_dangerous_tags(raw_text)
+        hardened_text = self.escape_boundary_breakouts(cleaned_text)
 
         # Compute deterministic SHA256 hash of the cleaned text payload
-        content_hash = hashlib.sha256(cleaned_text.encode("utf-8")).hexdigest()
+        content_hash = hashlib.sha256(hardened_text.encode("utf-8")).hexdigest()
 
         # Format encapsulated block
         encapsulated = (
             f"{self.DIRECTIVE}\n"
             f'<untrusted_context source="{source_label}" hash="{content_hash}">\n'
-            f"{cleaned_text}\n"
+            f"{hardened_text}\n"
             f"</untrusted_context>"
         )
 

@@ -1,13 +1,14 @@
 """Deterministic policy gate and semantic intent alignment engine for AegisAgent.
 
 Prevents the "Lethal Trifecta" (untrusted data + execution tools + private access)
-by validating tool proposals against verified user root intent using dense semantic similarity.
+by validating tool proposals against verified user root intent using dense semantic similarity,
+safeguarded vector normalization, and strict data exfiltration interception.
 """
 
 import json
 import logging
 import re
-from typing import List, Optional, Set
+from typing import Any, List, Optional, Set
 
 import numpy as np
 import torch
@@ -72,10 +73,12 @@ class PolicyGate:
         if custom_read_only_tools:
             self.read_only_tools.update(custom_read_only_tools)
 
+        # Regex patterns for detecting data exfiltration, token leaking, and image tags
         self._exfil_regex = re.compile(
             r"https?://[^\s\"']+\?[^\s\"']*(token|key|secret|auth|session|pass|leak|exfil|dump|q=)",
             re.IGNORECASE,
         )
+        self._image_tag_regex = re.compile(r"!\[.*?\]\(.*?\)", re.IGNORECASE)
         self._url_regex = re.compile(r"https?://", re.IGNORECASE)
 
         self._encoder: Optional[SentenceTransformer] = None
@@ -101,7 +104,9 @@ class PolicyGate:
         return self._encoder
 
     def compute_similarity(self, text_a: str, text_b: str) -> float:
-        """Compute cosine similarity between two text snippets using dense embeddings.
+        """Compute normalized cosine similarity between two text snippets using dense embeddings.
+
+        Guards against zero-division errors, non-string inputs, and out-of-bound float values.
 
         Args:
             text_a: First text string (e.g. user root intent).
@@ -110,18 +115,34 @@ class PolicyGate:
         Returns:
             Cosine similarity score in range [-1.0, 1.0].
         """
-        if not text_a or not text_b:
+        if not text_a or not text_b or not isinstance(text_a, str) or not isinstance(text_b, str):
+            return 0.0
+
+        str_a = text_a.strip()
+        str_b = text_b.strip()
+        if not str_a or not str_b:
             return 0.0
 
         embeddings = self.encoder.encode(
-            [text_a, text_b],
+            [str_a, str_b],
             convert_to_numpy=True,
-            normalize_embeddings=True,
+            normalize_embeddings=False,
             show_progress_bar=False,
         )
-        # Since embeddings are normalized, cosine similarity is the dot product
-        similarity = float(np.dot(embeddings[0], embeddings[1]))
-        return max(-1.0, min(1.0, similarity))
+
+        vec_a = embeddings[0]
+        vec_b = embeddings[1]
+
+        norm_a = float(np.linalg.norm(vec_a))
+        norm_b = float(np.linalg.norm(vec_b))
+
+        # Guard against zero-magnitude vectors
+        if norm_a < 1e-9 or norm_b < 1e-9:
+            return 0.0
+
+        cosine_sim = float(np.dot(vec_a, vec_b) / (norm_a * norm_b))
+        # Ensure strict mathematical bounds [-1.0, 1.0]
+        return float(np.clip(cosine_sim, -1.0, 1.0))
 
     def evaluate_tool_call(
         self,
@@ -181,19 +202,20 @@ class PolicyGate:
 
         # Rule 3: Check for data exfiltration channels in read-only / passive tools under tainted session
         has_exfil_channel = bool(self._exfil_regex.search(serialized_args))
+        has_image_exfil = bool(self._image_tag_regex.search(serialized_args))
         unauthorized_url_egress = bool(
             self._url_regex.search(serialized_args)
             and not self._url_regex.search(session.user_root_intent)
             and similarity < self.SIMILARITY_THRESHOLD
         )
 
-        if has_exfil_channel or unauthorized_url_egress:
+        if has_exfil_channel or has_image_exfil or unauthorized_url_egress:
             blast_contained = bool(detector_scan.is_safe) if detector_scan is not None else False
             return PolicyDecision(
                 verdict=PolicyVerdict.BLOCK.value,
                 reason=(
-                    f"Data Exfiltration Channel: Tainted session attempting unauthorized external URL egress "
-                    f"or secret query parameter exfiltration via '{tool_proposal.tool_name}'."
+                    f"Data Exfiltration Channel: Tainted session attempting unauthorized external URL egress, "
+                    f"markdown image exfiltration, or secret query parameter transmission via '{tool_proposal.tool_name}'."
                 ),
                 intent_similarity_score=round(similarity, 4),
                 blast_radius_contained=blast_contained,

@@ -1,10 +1,12 @@
 """Multi-layer prompt injection & exploit detector for AegisAgent.
 
 Combines rule-based regex heuristics, unicode normalization, base64 de-obfuscation,
-and transformer-based sequence classification with token sliding-window analysis.
+comment payload extraction, shell expansion inspection, and transformer-based sequence
+classification with token sliding-window analysis.
 """
 
 import base64
+import html
 import logging
 import re
 import time
@@ -24,7 +26,8 @@ class InjectionDetector:
 
     DEFAULT_MODEL = "protectai/deberta-v3-base-prompt-injection-v2"
     CHUNK_SIZE = 450
-    STRIDE = 100  # Overlap between consecutive sliding windows
+    STRIDE = 150  # 150-token overlap between consecutive sliding windows
+    MAX_INPUT_CHARS = 100000  # Defensive character limit against DoS
 
     def __init__(
         self,
@@ -53,6 +56,7 @@ class InjectionDetector:
             r"(?:[A-Za-z0-9+/]{4}){4,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?"
         )
         self._zero_width_regex = re.compile(r"[\u200B-\u200D\uFEFF\u00A0]")
+        self._comment_regex = re.compile(r"<!--([\s\S]*?)-->")
 
         if not lazy_load:
             self._init_model()
@@ -64,16 +68,18 @@ class InjectionDetector:
             ("SYSTEM_OVERRIDE", r"system\s+override"),
             ("DEVELOPER_MODE", r"you\s+are\s+now\s+in\s+developer\s+mode"),
             ("BEGIN_SYSTEM_TAG", r"---BEGIN\s+SYSTEM---"),
-            ("ASSISTANT_PREFIX", r"(^|\n)\s*assistant\s*:"),
-            ("HTML_COMMENT_INJECTION", r"<!--[\s\S]*?(system|assistant|override|ignore|eval|exec|dump|curl|wget|admin|prompt|exfil|sqlite)[\s\S]*?-->"),
+            ("ASSISTANT_PREFIX", r"(^|\n|\b)\s*assistant\s*:"),
+            ("HTML_COMMENT_DIRECTIVE", r"<!--[\s\S]*?(system|assistant|override|ignore|eval|exec|dump|curl|wget|admin|prompt|exfil|sqlite)[\s\S]*?-->"),
             ("SHELL_SUBCOMMAND", r"\$\([^\)]+\)"),
             ("BACKTICK_COMMAND", r"`[^`\n]+`"),
+            ("PROCESS_SUBSTITUTION", r"[<>]\([^\)]+\)"),
             ("PIPE_TO_SHELL", r"\|\s*(bash|sh|zsh|powershell|cmd)\b"),
             ("COMMAND_RM_RF", r"\brm\s+-(rf|fr|r|f)\b"),
             ("SQL_DROP_TABLE", r"\bDROP\s+TABLE\b"),
             ("CODE_EVAL", r"\beval\s*\("),
             ("OS_SYSTEM", r"\bos\.system\s*\("),
             ("MARKDOWN_IMAGE_EXFIL", r"!\[.*?\]\(\s*https?://[^\)]+\?[^\)]*(token|key|secret|auth|session|pass|leak|exfil|dump|q=)"),
+            ("ENV_VAR_EXPANSION_EXFIL", r"\$(env|PWD|USER|HOME|SHELL|PATH|\{env\}|\{[A-Za-z0-9_]+\})"),
         ]
         self.heuristic_rules: List[Tuple[str, re.Pattern]] = [
             (name, re.compile(pattern, re.IGNORECASE))
@@ -122,22 +128,49 @@ class InjectionDetector:
             self._init_model()
         return self._tokenizer
 
-    def normalize_text(self, text: str) -> str:
-        """Normalize unicode representation and strip zero-width/invisible obfuscation characters.
+    def normalize_text(self, text: Any) -> str:
+        """Defensively validate, truncate, normalize unicode, and strip invisible characters.
 
         Args:
-            text: Input raw string.
+            text: Raw input (str, bytes, or iterable).
 
         Returns:
-            Normalized unicode string.
+            Normalized string.
         """
-        if not text:
+        if text is None:
             return ""
-        # Unicode normalization (NFKC compatibility decomposition + canonical composition)
+
+        if isinstance(text, (bytes, bytearray)):
+            try:
+                text = text.decode("utf-8", errors="replace")
+            except Exception:
+                return ""
+        elif not isinstance(text, str):
+            text = str(text)
+
+        # Truncate defensively to prevent DoS memory overflow
+        if len(text) > self.MAX_INPUT_CHARS:
+            text = text[: self.MAX_INPUT_CHARS]
+
+        # Unicode normalization (NFKC)
         normalized = unicodedata.normalize("NFKC", text)
-        # Strip zero-width / hidden spaces
+        # Strip zero-width and invisible whitespace characters
         normalized = self._zero_width_regex.sub("", normalized)
         return normalized
+
+    def extract_comment_contents(self, text: str) -> List[str]:
+        """Extract hidden contents embedded within HTML and Markdown comments.
+
+        Returns:
+            List of unescaped inner comment strings.
+        """
+        matches = self._comment_regex.findall(text)
+        cleaned_comments = []
+        for match in matches:
+            comment_body = html.unescape(match.strip())
+            if comment_body:
+                cleaned_comments.append(comment_body)
+        return cleaned_comments
 
     def _extract_and_decode_base64(self, text: str) -> List[Tuple[str, str]]:
         """Identify candidate base64 strings and decode valid UTF-8 text payloads.
@@ -148,13 +181,11 @@ class InjectionDetector:
         matches = self._base64_regex.findall(text)
         decoded_payloads = []
         for match in matches:
-            # Avoid decoding tiny false-positive alphanumeric chunks
             if len(match.strip()) < 16:
                 continue
             try:
                 decoded_bytes = base64.b64decode(match, validate=True)
-                decoded_text = decoded_bytes.decode("utf-8")
-                # Filter out pure binary / non-printable noise
+                decoded_text = decoded_bytes.decode("utf-8", errors="ignore")
                 if decoded_text and any(c.isalnum() for c in decoded_text):
                     decoded_payloads.append((match, decoded_text))
             except Exception:
@@ -162,7 +193,7 @@ class InjectionDetector:
         return decoded_payloads
 
     def check_heuristics(self, text: str) -> List[str]:
-        """Evaluate text against compiled regex heuristics including decoded base64 payloads.
+        """Evaluate text, unescaped comments, and decoded base64 payloads against heuristics.
 
         Args:
             text: Normalized text to inspect.
@@ -171,12 +202,22 @@ class InjectionDetector:
             List of triggered heuristic rule names.
         """
         detected = []
-        # Check against direct normalized text
+
+        # 1. Direct normalized text check
         for name, pattern in self.heuristic_rules:
             if pattern.search(text):
                 detected.append(name)
 
-        # Check against any embedded base64 de-obfuscated content
+        # 2. Inspect contents within hidden HTML/Markdown comments
+        comment_bodies = self.extract_comment_contents(text)
+        for comment_body in comment_bodies:
+            norm_comment = self.normalize_text(comment_body)
+            for name, pattern in self.heuristic_rules:
+                comment_rule = f"COMMENT_EMBEDDED_{name}"
+                if pattern.search(norm_comment) and comment_rule not in detected:
+                    detected.append(comment_rule)
+
+        # 3. Inspect embedded Base64 de-obfuscated content
         base64_chunks = self._extract_and_decode_base64(text)
         for _, decoded_text in base64_chunks:
             decoded_normalized = self.normalize_text(decoded_text)
@@ -188,7 +229,7 @@ class InjectionDetector:
         return detected
 
     def _chunk_text_by_tokens(self, text: str) -> List[Tuple[int, str, int]]:
-        """Split text into overlapping sliding-window token segments.
+        """Split text into overlapping sliding-window token segments with robust stride.
 
         Returns:
             List of tuples: (chunk_index, chunk_text, token_count)
@@ -222,8 +263,6 @@ class InjectionDetector:
         Returns:
             Tuple of (injection_confidence_score [0.0 to 1.0], label_name)
         """
-        # HuggingFace pipeline returns e.g. [{'label': 'INJECTION', 'score': 0.99}]
-        # or [{'label': 'LABEL_1', 'score': 0.99}] or [{'label': 'SAFE', 'score': 0.95}]
         top_pred = prediction[0]
         label = top_pred.get("label", "").upper()
         raw_score = float(top_pred.get("score", 0.0))
@@ -233,16 +272,15 @@ class InjectionDetector:
         elif "SAFE" in label or label in ("LABEL_0", "LEGIT", "BENIGN"):
             injection_score = 1.0 - raw_score
         else:
-            # Fallback for generic outputs
             injection_score = raw_score
 
         return injection_score, label
 
-    def scan(self, text: str, threshold: float = 0.80) -> ScanResult:
+    def scan(self, text: Any, threshold: float = 0.80) -> ScanResult:
         """Scan input payload for prompt injection, jailbreaks, and heuristic exploit patterns.
 
         Args:
-            text: Input string to analyze.
+            text: Input payload (str, bytes, or iterable).
             threshold: Confidence threshold (0.0 to 1.0) above which text is flagged unsafe.
 
         Returns:
@@ -250,8 +288,10 @@ class InjectionDetector:
         """
         start_time = time.perf_counter()
 
-        # Handle empty, non-string, or whitespace inputs
-        if text is None or not isinstance(text, str) or not text.strip():
+        # 1. Defensive type handling and normalization
+        normalized_text = self.normalize_text(text)
+
+        if not normalized_text.strip():
             latency_ms = (time.perf_counter() - start_time) * 1000.0
             return ScanResult(
                 is_safe=True,
@@ -262,10 +302,7 @@ class InjectionDetector:
                 detected_heuristics=[],
             )
 
-        # 1. Unicode normalization and de-obfuscation
-        normalized_text = self.normalize_text(text)
-
-        # 2. Fast heuristic pre-filtering
+        # 2. Fast heuristic pre-filtering across body, comments, and base64
         heuristics_matched = self.check_heuristics(normalized_text)
         if heuristics_matched:
             latency_ms = (time.perf_counter() - start_time) * 1000.0
@@ -283,9 +320,14 @@ class InjectionDetector:
 
         # 3. Model Tokenization & Sliding-Window Analysis
         chunks = self._chunk_text_by_tokens(normalized_text)
-        total_tokens = sum(chunk[2] for chunk in chunks) if len(chunks) == 1 else len(
-            self.tokenizer.encode(normalized_text, add_special_tokens=False)
-        )
+
+        # Also extract unescaped comment bodies to test in neural classifier
+        comment_bodies = self.extract_comment_contents(normalized_text)
+        for c_idx, comment_body in enumerate(comment_bodies):
+            if len(comment_body.split()) >= 3:
+                chunks.append((len(chunks) + c_idx, comment_body, len(comment_body.split())))
+
+        total_tokens = sum(chunk[2] for chunk in chunks)
 
         highest_injection_score = 0.0
         flagged_chunk_info = None
