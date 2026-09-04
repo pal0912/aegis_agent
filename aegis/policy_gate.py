@@ -6,6 +6,7 @@ by validating tool proposals against verified user root intent using dense seman
 
 import json
 import logging
+import re
 from typing import List, Optional, Set
 
 import numpy as np
@@ -70,6 +71,12 @@ class PolicyGate:
         self.read_only_tools = set(self.READ_ONLY_TOOLS)
         if custom_read_only_tools:
             self.read_only_tools.update(custom_read_only_tools)
+
+        self._exfil_regex = re.compile(
+            r"https?://[^\s\"']+\?[^\s\"']*(token|key|secret|auth|session|pass|leak|exfil|dump|q=)",
+            re.IGNORECASE,
+        )
+        self._url_regex = re.compile(r"https?://", re.IGNORECASE)
 
         self._encoder: Optional[SentenceTransformer] = None
         if not lazy_load:
@@ -144,16 +151,13 @@ class PolicyGate:
                 blast_radius_contained=False,
             )
 
-        # Rule 2: Tainted Lethal Trifecta check
-        if session.is_session_tainted() and is_high_impact:
-            serialized_args = json.dumps(tool_proposal.arguments, sort_keys=True)
-            action_description = f"{tool_proposal.tool_name} with arguments {serialized_args}"
-            similarity = self.compute_similarity(session.user_root_intent, action_description)
+        serialized_args = json.dumps(tool_proposal.arguments, sort_keys=True)
+        action_description = f"{tool_proposal.tool_name} with arguments {serialized_args}"
+        similarity = self.compute_similarity(session.user_root_intent, action_description)
 
-            # Check if intent similarity is below threshold
+        # Rule 2: Tainted Lethal Trifecta check (high impact write tools)
+        if session.is_session_tainted() and is_high_impact:
             if similarity < self.SIMILARITY_THRESHOLD:
-                # Blast radius containment: true if detector missed the injection (is_safe=True)
-                # but policy gate successfully intercepted the unauthorized write
                 blast_contained = bool(detector_scan.is_safe) if detector_scan is not None else False
                 return PolicyDecision(
                     verdict=PolicyVerdict.BLOCK.value,
@@ -165,7 +169,6 @@ class PolicyGate:
                     blast_radius_contained=blast_contained,
                 )
 
-            # High impact tool is sufficiently aligned with user intent
             return PolicyDecision(
                 verdict=PolicyVerdict.ALLOW.value,
                 reason=(
@@ -176,10 +179,30 @@ class PolicyGate:
                 blast_radius_contained=False,
             )
 
-        # Rule 3: Tainted session invoking READ_ONLY tools
+        # Rule 3: Check for data exfiltration channels in read-only / passive tools under tainted session
+        has_exfil_channel = bool(self._exfil_regex.search(serialized_args))
+        unauthorized_url_egress = bool(
+            self._url_regex.search(serialized_args)
+            and not self._url_regex.search(session.user_root_intent)
+            and similarity < self.SIMILARITY_THRESHOLD
+        )
+
+        if has_exfil_channel or unauthorized_url_egress:
+            blast_contained = bool(detector_scan.is_safe) if detector_scan is not None else False
+            return PolicyDecision(
+                verdict=PolicyVerdict.BLOCK.value,
+                reason=(
+                    f"Data Exfiltration Channel: Tainted session attempting unauthorized external URL egress "
+                    f"or secret query parameter exfiltration via '{tool_proposal.tool_name}'."
+                ),
+                intent_similarity_score=round(similarity, 4),
+                blast_radius_contained=blast_contained,
+            )
+
+        # Rule 4: Safe passive read-only tool invocation
         return PolicyDecision(
             verdict=PolicyVerdict.ALLOW.value,
             reason=f"Safe passive operation: Read-only tool '{tool_proposal.tool_name}' permitted under tainted context.",
-            intent_similarity_score=1.0,
+            intent_similarity_score=round(similarity, 4),
             blast_radius_contained=False,
         )

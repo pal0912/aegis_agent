@@ -53,7 +53,13 @@ pip install -r requirements.txt
 Launch the Streamlit dashboard:
 
 ```bash
-streamlit run app.py
+# Windows
+.\venv\Scripts\Activate.ps1
+python -m streamlit run app.py
+
+# Linux / macOS
+source venv/bin/activate
+python -m streamlit run app.py
 ```
 
 ---

@@ -65,10 +65,15 @@ class InjectionDetector:
             ("DEVELOPER_MODE", r"you\s+are\s+now\s+in\s+developer\s+mode"),
             ("BEGIN_SYSTEM_TAG", r"---BEGIN\s+SYSTEM---"),
             ("ASSISTANT_PREFIX", r"(^|\n)\s*assistant\s*:"),
+            ("HTML_COMMENT_INJECTION", r"<!--[\s\S]*?(system|assistant|override|ignore|eval|exec|dump|curl|wget|admin|prompt|exfil|sqlite)[\s\S]*?-->"),
+            ("SHELL_SUBCOMMAND", r"\$\([^\)]+\)"),
+            ("BACKTICK_COMMAND", r"`[^`\n]+`"),
+            ("PIPE_TO_SHELL", r"\|\s*(bash|sh|zsh|powershell|cmd)\b"),
             ("COMMAND_RM_RF", r"\brm\s+-(rf|fr|r|f)\b"),
             ("SQL_DROP_TABLE", r"\bDROP\s+TABLE\b"),
             ("CODE_EVAL", r"\beval\s*\("),
             ("OS_SYSTEM", r"\bos\.system\s*\("),
+            ("MARKDOWN_IMAGE_EXFIL", r"!\[.*?\]\(\s*https?://[^\)]+\?[^\)]*(token|key|secret|auth|session|pass|leak|exfil|dump|q=)"),
         ]
         self.heuristic_rules: List[Tuple[str, re.Pattern]] = [
             (name, re.compile(pattern, re.IGNORECASE))
