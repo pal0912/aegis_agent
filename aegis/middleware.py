@@ -12,7 +12,7 @@ import logging
 from typing import Any, Callable, Dict, Optional, Type
 
 from langchain_core.tools import BaseTool
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from aegis.audit import AuditLogger
 from aegis.detector import InjectionDetector
@@ -173,6 +173,8 @@ def aegis_guard(
 
 class AegisToolWrapper(BaseTool):
     """Secure LangChain BaseTool wrapper with deterministic PolicyGate interception."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
     underlying_tool: BaseTool = Field(
         ..., description="The original underlying LangChain tool."
