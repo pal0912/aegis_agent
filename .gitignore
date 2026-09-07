@@ -7,7 +7,6 @@ __pycache__/
 *.so
 
 # Distribution / packaging
-.Python
 build/
 develop-eggs/
 dist/
@@ -61,6 +60,11 @@ htmlcov/
 
 # Streamlit local config
 .streamlit/
+
+# Documents and scratch binaries
+*.DOC
+*.doc
+*.docx
 
 # IDE & OS Artifacts
 .vscode/

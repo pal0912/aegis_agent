@@ -1,7 +1,7 @@
-"""Enterprise audit logger for AegisAgent.
+"""Enterprise audit logger for AegisAgent V2.
 
 Maintains an in-memory chronological event stream and writes structured,
-tamper-evident JSON Lines logs for forensic security analysis and compliance.
+tamper-evident, DLP-redacted JSON Lines logs for forensic security analysis and compliance.
 """
 
 import json
@@ -11,24 +11,31 @@ import threading
 from pathlib import Path
 from typing import List, Optional
 
+from aegis.dlp import DataLossPreventionEngine
 from aegis.types import AuditEvent
 
 logger = logging.getLogger(__name__)
 
 
 class AuditLogger:
-    """Thread-safe persistent audit logger recording security events across concurrent worker threads."""
+    """Thread-safe persistent audit logger recording security events with DLP redaction."""
 
     _instance: Optional["AuditLogger"] = None
     _singleton_lock = threading.RLock()
 
-    def __init__(self, log_filepath: str = "aegis_audit.jsonl") -> None:
-        """Initialize AuditLogger with local filepath and memory buffer.
+    def __init__(
+        self,
+        log_filepath: str = "aegis_audit.jsonl",
+        dlp_engine: Optional[DataLossPreventionEngine] = None,
+    ) -> None:
+        """Initialize AuditLogger with local filepath, memory buffer, and DLP engine.
 
         Args:
             log_filepath: Path to the JSONL audit output file.
+            dlp_engine: Optional DataLossPreventionEngine for secret and credential redaction.
         """
         self.log_filepath = Path(log_filepath)
+        self.dlp = dlp_engine or DataLossPreventionEngine()
         self._events: List[AuditEvent] = []
         self._lock = threading.RLock()
         self._ensure_log_file()
@@ -52,7 +59,7 @@ class AuditLogger:
             return cls._instance
 
     def log_event(self, event: AuditEvent) -> None:
-        """Record an immutable AuditEvent to memory and append to JSONL disk storage under lock.
+        """Record an immutable AuditEvent to memory and append DLP-redacted JSON to disk storage under lock.
 
         Args:
             event: Pydantic v2 AuditEvent instance.
@@ -60,9 +67,11 @@ class AuditLogger:
         with self._lock:
             self._events.append(event)
             try:
-                event_json = event.model_dump_json()
+                raw_json = event.model_dump_json()
+                # Run complete JSON serialization through DLP redaction engine
+                sanitized_json = self.dlp.redact_text(raw_json)
                 with open(self.log_filepath, "a", encoding="utf-8") as f:
-                    f.write(event_json + "\n")
+                    f.write(sanitized_json + "\n")
                     f.flush()
             except Exception as e:
                 logger.error("Failed to write audit event to '%s': %s", self.log_filepath, e)

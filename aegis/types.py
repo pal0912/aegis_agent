@@ -1,12 +1,13 @@
-"""Core type definitions and Pydantic v2 data models for AegisAgent.
+"""Core type definitions and Pydantic v2 data models for AegisAgent V2.
 
-Enterprise-grade defense-in-depth security middleware and deterministic policy gate.
+Enterprise-grade defense-in-depth security middleware, capability-based security model,
+outbound network guard, DLP engine, and deterministic policy gate.
 """
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, List, Optional
 import hashlib
+from typing import Any, List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -23,6 +24,20 @@ class ToolPrivilege(str, Enum):
 
     READ_ONLY = "READ_ONLY"  # Passive tools (e.g., search, fetch_doc, read_db).
     HIGH_IMPACT_WRITE = "HIGH_IMPACT_WRITE"  # Destructive or state-mutating tools (e.g., execute_shell, send_email, write_db, transfer_funds).
+
+
+class Capability(str, Enum):
+    """Fine-grained capability-based security classifications for agent tools and actions."""
+
+    READ_PUBLIC = "READ_PUBLIC"  # Public web browsing, open docs, weather.
+    READ_PRIVATE = "READ_PRIVATE"  # Internal customer data, local files, internal DB reads, environment vars.
+    WRITE_FILE = "WRITE_FILE"  # Creating or modifying local files.
+    WRITE_DATABASE = "WRITE_DATABASE"  # Inserts, updates, deletes on any persistence store.
+    SEND_EXTERNAL_MESSAGE = "SEND_EXTERNAL_MESSAGE"  # Outbound email, Slack, webhooks, SMS.
+    EXECUTE_CODE = "EXECUTE_CODE"  # Shell execution (bash, sh, cmd, powershell), Python eval/exec, Docker commands.
+    NETWORK_EXTERNAL = "NETWORK_EXTERNAL"  # Outbound HTTP/HTTPS requests, sockets.
+    FINANCIAL_ACTION = "FINANCIAL_ACTION"  # Bank/wire transfers, credit card charges.
+    ADMIN = "ADMIN"  # Modifying access controls, dropping tables, credential rotation.
 
 
 class PolicyVerdict(str, Enum):
@@ -87,6 +102,14 @@ class ToolCallProposal(BaseModel):
         min_length=1,
         description="Trace identifier of the source context that triggered this tool call.",
     )
+    inferred_capability: Capability = Field(
+        default=Capability.READ_PUBLIC,
+        description="Inferred or declared operational capability requested by this tool invocation.",
+    )
+    target_destination: Optional[str] = Field(
+        default=None,
+        description="Optional target destination: URL, file path, email address, IP host, or SQL resource.",
+    )
 
 
 class PolicyDecision(BaseModel):
@@ -109,6 +132,14 @@ class PolicyDecision(BaseModel):
     blast_radius_contained: bool = Field(
         ...,
         description="True if detector missed the injection, but PolicyGate blocked unauthorized tool execution.",
+    )
+    dlp_violations: List[str] = Field(
+        default_factory=list,
+        description="List of detected secret or PII leak violations intercepted by DLP.",
+    )
+    network_verdict: str = Field(
+        default="PASS",
+        description="Network guard evaluation verdict ('PASS', 'BLOCKED_SSRF', 'BLOCKED_DISALLOWED_DOMAIN', 'BLOCKED_METHOD').",
     )
 
     @field_validator("verdict")

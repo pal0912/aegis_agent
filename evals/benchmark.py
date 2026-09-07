@@ -1,8 +1,8 @@
-"""Comprehensive benchmarking and evaluation suite for AegisAgent.
+"""Comprehensive benchmarking and evaluation suite for AegisAgent V2.
 
-Evaluates InjectionDetector and PolicyGate across adversarial and benign enterprise datasets,
-computing precision, recall, F1, FPR, FNR, Baseline ASR vs. Aegis ASR, Blast Radius Containment,
-and P50/P95/P99 latency profiles.
+Evaluates InjectionDetector, CapabilityRegistry, OutboundNetworkGuard, DataLossPreventionEngine,
+and PolicyGate across adversarial and benign enterprise datasets, computing precision, recall, F1,
+FPR, FNR, Baseline ASR vs. Aegis ASR, Blast Radius Containment, and P50/P95/P99 latency profiles.
 """
 
 import io
@@ -18,7 +18,10 @@ from rich.table import Table
 from tabulate import tabulate
 
 from aegis.audit import AuditLogger
+from aegis.capabilities import CapabilityRegistry
 from aegis.detector import InjectionDetector
+from aegis.dlp import DataLossPreventionEngine
+from aegis.network_guard import OutboundNetworkGuard
 from aegis.policy_gate import PolicyGate
 from aegis.taint import SessionContext
 from aegis.types import AuditEvent, ScanResult, ToolCallProposal
@@ -39,7 +42,7 @@ console = Console(force_terminal=True, legacy_windows=False, no_color=False)
 
 
 class AegisBenchmarkRunner:
-    """Orchestrates comprehensive security and performance evaluation for AegisAgent."""
+    """Orchestrates comprehensive security and performance evaluation for AegisAgent V2."""
 
     def __init__(
         self,
@@ -105,6 +108,9 @@ class AegisBenchmarkRunner:
                 "detector_flagged": not scan_res.is_safe,
                 "confidence_score": scan_res.confidence_score,
                 "policy_verdict": policy_dec.verdict,
+                "network_verdict": policy_dec.network_verdict,
+                "dlp_violations": policy_dec.dlp_violations,
+                "policy_reason": policy_dec.reason,
                 "similarity": policy_dec.intent_similarity_score,
                 "blast_contained": blast_contained,
                 "aegis_blocked": aegis_blocked,
@@ -144,6 +150,8 @@ class AegisBenchmarkRunner:
                 "detector_flagged": not scan_res.is_safe,
                 "confidence_score": scan_res.confidence_score,
                 "policy_verdict": policy_dec.verdict,
+                "network_verdict": policy_dec.network_verdict,
+                "dlp_violations": policy_dec.dlp_violations,
                 "similarity": policy_dec.intent_similarity_score,
                 "scan_latency_ms": t_scan,
                 "gate_latency_ms": t_gate,
@@ -203,11 +211,11 @@ class AegisBenchmarkRunner:
         lat = results["latency"]
 
         print("\n" + "=" * 80)
-        print("          AEGISAGENT ENTERPRISE SECURITY BENCHMARK REPORT          ")
+        print("        AEGISAGENT V2 ENTERPRISE SECURITY BENCHMARK REPORT         ")
         print("=" * 80 + "\n")
 
         # 1. Summary Metrics Table
-        metrics_table = Table(title="Core Detection & Security Metrics", style="cyan")
+        metrics_table = Table(title="Core Detection & Security Metrics (V2 Defense-in-Depth)", style="cyan")
         metrics_table.add_column("Metric Name", style="bold white", justify="left")
         metrics_table.add_column("Score / Value", style="bold green", justify="right")
         metrics_table.add_column("Benchmark Target", style="dim white", justify="right")
@@ -244,7 +252,7 @@ class AegisBenchmarkRunner:
         console.print(perf_table)
 
         # 3. Detailed Attack Vector Results
-        atk_table = Table(title="Adversarial Attack Vectors Evaluation Breakdown", style="red")
+        atk_table = Table(title="Adversarial Attack Vectors Evaluation Breakdown (16 Vectors)", style="red")
         atk_table.add_column("ID", style="dim")
         atk_table.add_column("Attack Vector Name", style="bold white")
         atk_table.add_column("Family", style="yellow")
