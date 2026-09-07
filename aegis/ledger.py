@@ -169,7 +169,13 @@ class CryptographicLedger:
                         sig = record.get("ledger_signature")
                         ts = record.get("timestamp", "")
 
-                        # If record has no ledger fields, flag if chain was expected
+                        # If record has no ledger fields at all (legacy entry before genesis), allow if before chain
+                        if seq is None and prev_h is None and entry_h is None and sig is None:
+                            if verified_count == 0 and expected_seq == 1:
+                                continue
+                            return False, verified_count, f"Line {line_idx}: Missing cryptographic ledger metadata"
+
+                        # If record has partial or missing ledger fields, flag tampering / corruption
                         if seq is None or prev_h is None or entry_h is None or sig is None:
                             return False, verified_count, f"Line {line_idx}: Missing cryptographic ledger metadata"
 
@@ -214,6 +220,7 @@ class CryptographicLedger:
             return self._last_entry_hash
 
     verify_chain_integrity = verify_ledger_integrity
+    verify_chain = verify_ledger_integrity
 
     def reset(self) -> None:
         """Reset ledger sequence state (primarily for test fixture isolation)."""
