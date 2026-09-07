@@ -18,17 +18,21 @@ class SessionContext:
         self,
         user_root_intent: str,
         session_id: Optional[str] = None,
+        is_tainted: bool = False,
+        trust_level: TrustLevel = TrustLevel.TRUSTED,
     ) -> None:
         """Initialize new agent session context with root verified intent.
 
         Args:
             user_root_intent: Direct prompt/intent authorized by verified user.
             session_id: Optional unique session identifier; generates UUID4 if None.
+            is_tainted: Initial taint state.
+            trust_level: Initial trust level classification.
         """
         self.session_id: str = session_id or str(uuid.uuid4())
         self.user_root_intent: str = user_root_intent
-        self.is_tainted: bool = False
-        self.trust_level: TrustLevel = TrustLevel.TRUSTED
+        self.is_tainted: bool = is_tainted
+        self.trust_level: TrustLevel = trust_level
         self.provenance_history: List[Dict[str, Any]] = [
             {
                 "timestamp": datetime.now(timezone.utc).isoformat(),

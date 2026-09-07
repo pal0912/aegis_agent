@@ -36,6 +36,8 @@ class AuditLogger:
         """
         self.log_filepath = Path(log_filepath)
         self.dlp = dlp_engine or DataLossPreventionEngine()
+        from aegis.ledger import CryptographicLedger
+        self.ledger = CryptographicLedger(log_filepath=str(self.log_filepath))
         self._events: List[AuditEvent] = []
         self._lock = threading.RLock()
         self._ensure_log_file()
@@ -58,11 +60,14 @@ class AuditLogger:
                 cls._instance = cls(log_filepath=log_filepath)
             return cls._instance
 
-    def log_event(self, event: AuditEvent) -> None:
-        """Record an immutable AuditEvent to memory, assign MITRE ATLAS tags, and append DLP-redacted JSON to disk.
+    def log_event(self, event: AuditEvent) -> AuditEvent:
+        """Record an immutable AuditEvent to memory, assign MITRE ATLAS tags, sign via CryptographicLedger, and append to disk.
 
         Args:
             event: Pydantic v2 AuditEvent instance.
+
+        Returns:
+            The final cryptographically signed and enriched AuditEvent.
         """
         from aegis.tracer import SecurityTracer
 
@@ -73,23 +78,38 @@ class AuditLogger:
                 scan_result=event.scan_result,
                 policy_decision=event.policy_decision,
             )
-            # Create enriched copy if frozen
             event = event.model_copy(update={
                 "mitre_atlas_tags": mapped_tags,
                 "otlp_export": tracer.export_otlp_log(event),
             })
 
         with self._lock:
-            self._events.append(event)
             try:
+                # 1. First get DLP-redacted JSON dictionary
                 raw_json = event.model_dump_json()
-                # Run complete JSON serialization through DLP redaction engine
-                sanitized_json = self.dlp.redact_text(raw_json)
+                sanitized_json_str = self.dlp.redact_text(raw_json)
+                event_dict = json.loads(sanitized_json_str)
+
+                # 2. Cryptographically sign event via Ledger
+                ledger_sig = self.ledger.sign_event(event_dict, event.timestamp)
+                event = event.model_copy(update=ledger_sig)
+                self._events.append(event)
+
+                # 3. Add ledger signature to disk payload and write
+                event_dict.update(ledger_sig)
+                final_disk_json = json.dumps(event_dict)
+
                 with open(self.log_filepath, "a", encoding="utf-8") as f:
-                    f.write(sanitized_json + "\n")
+                    f.write(final_disk_json + "\n")
                     f.flush()
             except Exception as e:
                 logger.error("Failed to write audit event to '%s': %s", self.log_filepath, e)
+
+            return event
+
+    def verify_ledger(self) -> Tuple[bool, int, Optional[str]]:
+        """Verify the integrity of the audit log using the cryptographic ledger."""
+        return self.ledger.verify_ledger_integrity(str(self.log_filepath))
 
     def get_recent_events(self, limit: int = 50) -> List[AuditEvent]:
         """Retrieve recent audit events in chronological order under lock.
@@ -109,8 +129,10 @@ class AuditLogger:
         """Clear in-memory buffer and reset log file (primarily for test fixtures)."""
         with self._lock:
             self._events.clear()
+            self.ledger.reset()
             if self.log_filepath.exists():
                 try:
                     self.log_filepath.write_text("", encoding="utf-8")
                 except Exception as e:
                     logger.warning("Failed to clear audit log file: %s", e)
+

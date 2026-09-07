@@ -15,11 +15,13 @@ from sentence_transformers import SentenceTransformer
 
 from aegis.action_graph import ActionDependencyGraph
 from aegis.capabilities import CapabilityRegistry
+from aegis.consensus import DualAgentConsensusGate
 from aegis.dlp import DataLossPreventionEngine
 from aegis.honeytoken import HoneytokenManager
 from aegis.memory_guard import MemoryGuard
 from aegis.network_guard import OutboundNetworkGuard
 from aegis.risk_engine import RiskEngine
+from aegis.sandbox import IsolatedCodeSandbox
 from aegis.taint import SessionContext
 from aegis.types import (
     Capability,
@@ -69,8 +71,10 @@ class PolicyGate:
         honeytoken_manager: Optional[HoneytokenManager] = None,
         action_graph: Optional[ActionDependencyGraph] = None,
         risk_engine: Optional[RiskEngine] = None,
+        consensus_gate: Optional[DualAgentConsensusGate] = None,
+        sandbox: Optional[IsolatedCodeSandbox] = None,
     ) -> None:
-        """Initialize PolicyGate with security engines, behavioral graph, and risk arbitrator."""
+        """Initialize PolicyGate with security engines, behavioral graph, consensus arbitrator, and sandbox."""
         self.model_name = model_name
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -84,6 +88,8 @@ class PolicyGate:
         self.honeytoken = honeytoken_manager or HoneytokenManager()
         self.action_graph = action_graph or ActionDependencyGraph()
         self.risk_engine = risk_engine or RiskEngine()
+        self.consensus_gate = consensus_gate or DualAgentConsensusGate()
+        self.sandbox = sandbox or IsolatedCodeSandbox()
 
         self.high_impact_write_tools = set(self.HIGH_IMPACT_WRITE_TOOLS)
         if custom_high_impact_tools:
@@ -340,7 +346,23 @@ class PolicyGate:
                 risk_score=1.0,
             )
 
-        # Step 7: Strict Capability Enforcement for Critical Operations & High Drift
+        # Step 7: Static AST Analysis for Code Execution Proposals
+        if capability == Capability.EXECUTE_CODE:
+            code_payload = str(args.get("code") or args.get("script") or args.get("command") or "")
+            if code_payload:
+                is_safe_ast, ast_violation = self.sandbox.inspect_ast(code_payload)
+                if not is_safe_ast:
+                    return PolicyDecision(
+                        verdict=PolicyVerdict.BLOCK.value,
+                        reason=f"Code Sandbox AST Violation: {ast_violation}",
+                        intent_similarity_score=round(similarity, 4),
+                        blast_radius_contained=is_detector_miss,
+                        dlp_violations=dlp_violations,
+                        network_verdict="PASS",
+                        risk_score=1.0,
+                    )
+
+        # Step 8: Strict Capability Enforcement for Critical Operations & High Drift
         if not self.capability_registry.is_allowed_for_tainted_session(capability):
             if capability in {
                 Capability.EXECUTE_CODE,
@@ -369,7 +391,7 @@ class PolicyGate:
                     risk_score=0.90,
                 )
 
-        # Step 8: Data Exfiltration Channels & Semantic Divergence
+        # Step 9: Data Exfiltration Channels & Semantic Divergence
         has_exfil_channel = bool(self._exfil_regex.search(serialized_args))
         has_image_exfil = bool(self._image_tag_regex.search(serialized_args))
         unauthorized_url_egress = bool(
@@ -392,7 +414,32 @@ class PolicyGate:
                 risk_score=0.95,
             )
 
-        # Step 9: Multi-Factor Risk Scoring and Tri-State Decision via RiskEngine
+        # Step 10: Dual-Agent Consensus & Shadow Evaluator for High-Impact Actions
+        consensus_approved: Optional[bool] = None
+        consensus_details: Optional[dict[str, Any]] = None
+        if self.consensus_gate.requires_consensus(capability):
+            is_cns_ok, cns_reason, cns_details = self.consensus_gate.evaluate_consensus(
+                user_intent=session.user_root_intent,
+                proposed_tool=tool_proposal,
+                session_context=session,
+                primary_similarity_score=similarity,
+            )
+            consensus_approved = is_cns_ok
+            consensus_details = cns_details
+            if not is_cns_ok:
+                return PolicyDecision(
+                    verdict=PolicyVerdict.BLOCK.value,
+                    reason=cns_reason,
+                    intent_similarity_score=round(similarity, 4),
+                    blast_radius_contained=is_detector_miss,
+                    dlp_violations=dlp_violations,
+                    network_verdict="PASS",
+                    risk_score=0.95,
+                    consensus_approved=False,
+                    consensus_details=cns_details,
+                )
+
+        # Step 11: Multi-Factor Risk Scoring and Tri-State Decision via RiskEngine
         risk_score, risk_verdict, breakdown = self.risk_engine.calculate_risk(
             detector_score=detector_confidence,
             is_tainted=is_tainted,
@@ -415,6 +462,8 @@ class PolicyGate:
                 dlp_violations=dlp_violations,
                 network_verdict="PASS",
                 risk_score=risk_score,
+                consensus_approved=consensus_approved,
+                consensus_details=consensus_details,
             )
 
         if risk_verdict == PolicyVerdict.BLOCK:
@@ -429,9 +478,11 @@ class PolicyGate:
                 dlp_violations=dlp_violations,
                 network_verdict="PASS",
                 risk_score=risk_score,
+                consensus_approved=consensus_approved,
+                consensus_details=consensus_details,
             )
 
-        # Step 10: Safe Operation Permitted -> Record node in action graph
+        # Step 12: Safe Operation Permitted -> Record node in action graph
         self.action_graph.record_node(session.session_id, capability, args)
         return PolicyDecision(
             verdict=PolicyVerdict.ALLOW.value,
@@ -441,4 +492,11 @@ class PolicyGate:
             dlp_violations=dlp_violations,
             network_verdict="PASS",
             risk_score=risk_score,
+            consensus_approved=consensus_approved,
+            consensus_details=consensus_details,
         )
+
+    def execute_sandboxed_tool(self, code: str, timeout_sec: Optional[float] = None) -> dict[str, Any]:
+        """Execute Python code in the ephemeral isolated sandbox environment."""
+        return self.sandbox.execute_sandboxed(code, timeout_sec=timeout_sec)
+

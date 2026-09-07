@@ -4,28 +4,37 @@
 from aegis.action_graph import ActionDependencyGraph, ActionNode
 from aegis.audit import AuditLogger
 from aegis.capabilities import CapabilityRegistry
-from aegis.detector import InjectionDetector
+from aegis.consensus import DualAgentConsensusGate
+from aegis.detector import AegisDetector, InjectionDetector
 from aegis.dlp import DataLossPreventionEngine
+from aegis.gateway import create_gateway_app
 from aegis.honeytoken import HoneytokenManager
+from aegis.ledger import CryptographicLedger
 from aegis.memory_guard import MemoryEntry, MemoryGuard
 from aegis.middleware import AegisToolWrapper, aegis_guard
+from aegis.multimodal import MultimodalGuard
 from aegis.network_guard import OutboundNetworkGuard
 from aegis.policy_gate import PolicyGate
 from aegis.risk_engine import RiskEngine
+from aegis.sandbox import IsolatedCodeSandbox
 from aegis.sanitizer import ContextSanitizer
 from aegis.taint import SessionContext
+from aegis.tracer import SecurityTracer
 from aegis.types import (
     AuditEvent,
     Capability,
+    MitreAtlasTechnique,
+    MultiTierOutcome,
     PolicyDecision,
     PolicyVerdict,
     ScanResult,
     ToolCallProposal,
     ToolPrivilege,
+    TraceHop,
     TrustLevel,
 )
 
-__version__ = "0.2.0"
+__version__ = "2.0.0"
 __all__ = [
     "TrustLevel",
     "ToolPrivilege",
@@ -35,7 +44,11 @@ __all__ = [
     "ToolCallProposal",
     "PolicyDecision",
     "AuditEvent",
+    "TraceHop",
+    "MitreAtlasTechnique",
+    "MultiTierOutcome",
     "InjectionDetector",
+    "AegisDetector",
     "ContextSanitizer",
     "SessionContext",
     "AuditLogger",
@@ -49,6 +62,13 @@ __all__ = [
     "ActionDependencyGraph",
     "RiskEngine",
     "PolicyGate",
+    "MultimodalGuard",
+    "SecurityTracer",
+    "IsolatedCodeSandbox",
+    "DualAgentConsensusGate",
+    "CryptographicLedger",
+    "create_gateway_app",
     "aegis_guard",
     "AegisToolWrapper",
 ]
+

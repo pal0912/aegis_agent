@@ -193,6 +193,17 @@ enable_heuristics = st.sidebar.checkbox(
 )
 
 st.sidebar.markdown("---")
+st.sidebar.subheader("🔐 Cryptographic Audit Ledger")
+if st.sidebar.button("🔍 Verify Ledger Integrity", use_container_width=True):
+    is_ledger_ok, verified_count, err_msg = audit_logger.verify_ledger()
+    if is_ledger_ok:
+        st.sidebar.success(f"✅ Ledger Verified!\n\n**Chained Blocks:** `{verified_count}` entries\n**Chain State:** UNBROKEN")
+    else:
+        st.sidebar.error(f"❌ Tampering Detected!\n\n{err_msg}")
+else:
+    st.sidebar.caption("Merkle SHA-256 hash-chaining & HMAC signatures active on `aegis_audit.jsonl`.")
+
+st.sidebar.markdown("---")
 st.sidebar.subheader("Active Honeytoken Canaries")
 st.sidebar.caption("Deterministic canary tripwires armed in environment context:")
 st.sidebar.code("AKIA_CANARY_PROD_TRAP\nsk-canary-auth-token\npostgres://canary_admin", language="text")
@@ -200,7 +211,7 @@ st.sidebar.code("AKIA_CANARY_PROD_TRAP\nsk-canary-auth-token\npostgres://canary_
 # Header
 st.markdown('<div class="main-title">AegisAgent V2 Security & SOC Console</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="sub-title">Multimodal Shielding, Behavioral Integrity, MITRE ATLAS Threat Taxonomy & Forensic Tracing</div>',
+    '<div class="sub-title">Isolated Code Sandboxing, Dual-Agent Consensus, Cryptographic Ledger & OpenTelemetry SIEM</div>',
     unsafe_allow_html=True,
 )
 
@@ -210,12 +221,14 @@ policy_gate.SIMILARITY_THRESHOLD = similarity_threshold
 policy_gate.risk_engine.allow_threshold = hitl_threshold
 
 # Main Navigation Tabs
-tab_defense, tab_multimodal, tab_soc, tab_audit = st.tabs([
+tab_defense, tab_sandbox, tab_multimodal, tab_soc, tab_audit = st.tabs([
     "🚀 Real-Time Defense & HITL",
+    "💻 Code Sandbox & Consensus",
     "📄 Multimodal Ingestion Shield (PDF / OCR)",
     "🔍 Forensic Trace Replay (OpenTelemetry / SIEM)",
     "📊 Live Audit Stream",
 ])
+
 
 # ==========================================
 # TAB 1: Real-Time Defense & HITL Pipeline
@@ -559,8 +572,139 @@ with tab_defense:
                 st.code(sanitized_context, language="xml")
 
 # ==========================================
-# TAB 2: Multimodal Ingestion Shield
+# TAB 2: Code Sandbox & Consensus
 # ==========================================
+with tab_sandbox:
+    st.subheader("💻 Ephemeral Code Execution Sandbox & Dual-Agent Consensus")
+    st.markdown(
+        "Confines Python code execution to ephemeral, network-isolated, resource-capped subprocesses with "
+        "static AST inspection and provides air-gapped dual-agent consensus gating for high-impact capabilities."
+    )
+
+    sb_col1, sb_col2 = st.columns(2, gap="large")
+
+    with sb_col1:
+        st.markdown("### 1. Ephemeral Code Sandbox Runner")
+        code_input = st.text_area(
+            "Python Code to Execute",
+            value="""# Calculate Fibonacci sequence safely
+def fib(n):
+    a, b = 0, 1
+    result = []
+    for _ in range(n):
+        result.append(a)
+        a, b = b, a + b
+    return result
+
+print("Fibonacci(10):", fib(10))
+""",
+            height=180,
+            help="Code will pass static AST pre-filtering and run inside a temporary isolated environment.",
+        )
+
+        sample_unsafe_ast = st.selectbox(
+            "Or Load Banned Malicious AST Code Sample",
+            [
+                "-- None (Use Custom Code Above) --",
+                "Subprocess Injection: import subprocess; subprocess.Popen('whoami')",
+                "Dynamic Builtin: eval('__import__(\"os\").system(\"dir\")')",
+                "Infinite Loop (Timeout Test): while True: pass",
+                "Socket Network Egress: import socket; s = socket.socket()",
+            ],
+        )
+
+        exec_code = code_input
+        if sample_unsafe_ast.startswith("Subprocess"):
+            exec_code = "import subprocess\nsubprocess.Popen(['whoami'])"
+        elif sample_unsafe_ast.startswith("Dynamic"):
+            exec_code = "evil = eval('__import__(\"os\").system(\"dir\")')"
+        elif sample_unsafe_ast.startswith("Infinite"):
+            exec_code = "# Infinite loop\nwhile True:\n    pass"
+        elif sample_unsafe_ast.startswith("Socket"):
+            exec_code = "import socket\ns = socket.socket()\ns.connect(('169.254.169.254', 80))"
+
+        if st.button("⚡ Run in Isolated Sandbox", type="primary"):
+            t_sb_0 = time.perf_counter()
+            sb_result = policy_gate.execute_sandboxed_tool(exec_code, timeout_sec=3.0)
+            sb_latency = (time.perf_counter() - t_sb_0) * 1000.0
+
+            st.markdown(f"**Execution Latency:** `{sb_latency:.2f} ms` | **Exit Code:** `{sb_result['exit_code']}`")
+            if sb_result["exit_code"] == 0:
+                st.markdown('<span class="badge-pass">SANDBOX EXECUTION: SUCCESS</span>', unsafe_allow_html=True)
+                if sb_result["stdout"]:
+                    st.text_area("Standard Output (stdout)", sb_result["stdout"], height=100)
+            else:
+                st.markdown('<span class="badge-block">SANDBOX VIOLATION / BLOCKED</span>', unsafe_allow_html=True)
+                st.error(f"Violation: {sb_result['violation'] or sb_result['stderr']}")
+                if sb_result["stderr"]:
+                    st.text_area("Standard Error (stderr)", sb_result["stderr"], height=100)
+
+    with sb_col2:
+        st.markdown("### 2. Dual-Agent Consensus Shadow Evaluator")
+        st.markdown(
+            "Tests whether high-impact capabilities (`ADMIN`, `FINANCIAL_ACTION`, `WRITE_DATABASE`) "
+            "are approved or overridden by the independent shadow evaluator."
+        )
+
+        cns_intent = st.text_input(
+            "User Root Objective",
+            value="Look up user profile details for customer 1042.",
+        )
+
+        cns_capability_choice = st.selectbox(
+            "Simulated Requested Capability",
+            options=["FINANCIAL_ACTION", "ADMIN", "WRITE_DATABASE", "EXECUTE_CODE", "READ_PRIVATE"],
+        )
+
+        cns_tool_args = st.text_area(
+            "Proposed Action Payload (JSON)",
+            value='{"action": "wire_transfer", "amount_usd": 50000, "destination": "attacker_wallet"}',
+            height=80,
+        )
+
+        cns_taint = st.checkbox("Simulate Session as Tainted by External Retrieval", value=True)
+
+        if st.button("⚖️ Evaluate Dual-Agent Consensus", type="primary"):
+            cap_enum = Capability(cns_capability_choice)
+            try:
+                parsed_args = json.loads(cns_tool_args)
+            except Exception:
+                parsed_args = {"raw": cns_tool_args}
+
+            sim_proposal = ToolCallProposal(
+                tool_name=f"sim_{cns_capability_choice.lower()}",
+                arguments=parsed_args,
+                source_trace_id="consensus_demo_trace",
+                inferred_capability=cap_enum,
+            )
+
+            sim_session = SessionContext(
+                user_root_intent=cns_intent,
+                is_tainted=cns_taint,
+                trust_level=TrustLevel.UNTRUSTED if cns_taint else TrustLevel.TRUSTED,
+            )
+
+            sim_similarity = policy_gate.compute_similarity(cns_intent, f"{cns_capability_choice} with {cns_tool_args}")
+            is_cns_pass, cns_reason, cns_details = policy_gate.consensus_gate.evaluate_consensus(
+                user_intent=cns_intent,
+                proposed_tool=sim_proposal,
+                session_context=sim_session,
+                primary_similarity_score=sim_similarity,
+            )
+
+            if is_cns_pass:
+                st.markdown('<span class="badge-pass">DUAL-AGENT CONSENSUS: APPROVED</span>', unsafe_allow_html=True)
+                st.success(cns_reason)
+            else:
+                st.markdown('<span class="badge-block">DUAL-AGENT CONSENSUS: REJECTED</span>', unsafe_allow_html=True)
+                st.error(cns_reason)
+
+            st.json(cns_details)
+
+# ==========================================
+# TAB 3: Multimodal Ingestion Shield
+# ==========================================
+
 with tab_multimodal:
     st.subheader("📄 Multimodal Document & Image OCR Ingestion Shield")
     st.markdown(

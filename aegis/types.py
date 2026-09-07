@@ -160,6 +160,18 @@ class PolicyDecision(BaseModel):
         default=False,
         description="True if tainted memory state was rolled back to a previous clean snapshot.",
     )
+    consensus_approved: Optional[bool] = Field(
+        default=None,
+        description="True if dual-agent consensus evaluation was performed and approved.",
+    )
+    consensus_details: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="Forensic evaluation breakdown from the shadow consensus evaluator.",
+    )
+    sandboxed_execution: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="Details of ephemeral sandbox execution if code execution was invoked.",
+    )
 
     @field_validator("verdict")
     @classmethod
@@ -269,9 +281,26 @@ class AuditEvent(BaseModel):
         default=None,
         description="OpenTelemetry SIEM-compatible structured log payload.",
     )
+    ledger_sequence_id: Optional[int] = Field(
+        default=None,
+        description="Cryptographically chained sequence ID in the audit ledger.",
+    )
+    ledger_prev_hash: Optional[str] = Field(
+        default=None,
+        description="SHA-256 hash of the preceding ledger block.",
+    )
+    ledger_entry_hash: Optional[str] = Field(
+        default=None,
+        description="SHA-256 hash of this ledger entry block.",
+    )
+    ledger_signature: Optional[str] = Field(
+        default=None,
+        description="HMAC-SHA256 signature guaranteeing ledger authenticity.",
+    )
 
     @staticmethod
     def hash_payload(payload: str) -> str:
         """Utility helper to generate canonical SHA-256 hash for raw content."""
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
 

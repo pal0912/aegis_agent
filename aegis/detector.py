@@ -371,3 +371,8 @@ class InjectionDetector:
             tokens_analyzed=total_tokens,
             detected_heuristics=[],
         )
+
+
+# Canonical alias for InjectionDetector
+AegisDetector = InjectionDetector
+
