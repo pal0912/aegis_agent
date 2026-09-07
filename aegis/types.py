@@ -1,7 +1,7 @@
 """Core type definitions and Pydantic v2 data models for AegisAgent V2.
 
 Enterprise-grade defense-in-depth security middleware, capability-based security model,
-outbound network guard, DLP engine, and deterministic policy gate.
+outbound network guard, DLP engine, honeytoken traps, memory protection, and deterministic policy gate.
 """
 
 from datetime import datetime, timezone
@@ -41,11 +41,12 @@ class Capability(str, Enum):
 
 
 class PolicyVerdict(str, Enum):
-    """Deterministic policy gate verdicts."""
+    """Tri-state deterministic policy gate verdicts."""
 
     ALLOW = "ALLOW"
     BLOCK = "BLOCK"
-    ESCALATE_TO_HUMAN = "ESCALATE_TO_HUMAN"
+    REQUIRE_HUMAN_APPROVAL = "REQUIRE_HUMAN_APPROVAL"
+    ESCALATE_TO_HUMAN = "REQUIRE_HUMAN_APPROVAL"
 
 
 class ScanResult(BaseModel):
@@ -119,7 +120,7 @@ class PolicyDecision(BaseModel):
 
     verdict: str = Field(
         ...,
-        description="Policy gate decision verdict: 'ALLOW', 'BLOCK', or 'ESCALATE_TO_HUMAN'.",
+        description="Policy gate decision verdict: 'ALLOW', 'BLOCK', or 'REQUIRE_HUMAN_APPROVAL'.",
     )
     reason: str = Field(
         ...,
@@ -140,6 +141,24 @@ class PolicyDecision(BaseModel):
     network_verdict: str = Field(
         default="PASS",
         description="Network guard evaluation verdict ('PASS', 'BLOCKED_SSRF', 'BLOCKED_DISALLOWED_DOMAIN', 'BLOCKED_METHOD').",
+    )
+    risk_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Unified composite risk score computed across neural, taint, capability, and semantic factors.",
+    )
+    canary_tripped: bool = Field(
+        default=False,
+        description="True if an active honeypot canary token was accessed or attempted to be exfiltrated.",
+    )
+    action_transition_valid: bool = Field(
+        default=True,
+        description="True if the proposed action transition satisfies the behavioral dependency graph.",
+    )
+    memory_rollback_triggered: bool = Field(
+        default=False,
+        description="True if tainted memory state was rolled back to a previous clean snapshot.",
     )
 
     @field_validator("verdict")

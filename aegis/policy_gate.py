@@ -1,8 +1,7 @@
-"""Deterministic policy gate, capability enforcement, and egress control engine for AegisAgent V2.
+"""Deterministic policy gate, capability enforcement, and multi-factor risk engine for AegisAgent V2.
 
-Prevents the "Lethal Trifecta" (untrusted data + execution tools + private access),
-enforces fine-grained operational capabilities, prevents SSRF / private network egress,
-and intercepts data loss / secret exfiltration attempts.
+Orchestrates capability arbitration, outbound network guard, DLP secret protection,
+honeypot canary traps, behavioral action dependency graph validation, and tri-state HITL authorization.
 """
 
 import json
@@ -14,9 +13,13 @@ import numpy as np
 import torch
 from sentence_transformers import SentenceTransformer
 
+from aegis.action_graph import ActionDependencyGraph
 from aegis.capabilities import CapabilityRegistry
 from aegis.dlp import DataLossPreventionEngine
+from aegis.honeytoken import HoneytokenManager
+from aegis.memory_guard import MemoryGuard
 from aegis.network_guard import OutboundNetworkGuard
+from aegis.risk_engine import RiskEngine
 from aegis.taint import SessionContext
 from aegis.types import (
     Capability,
@@ -31,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 class PolicyGate:
-    """Deterministic security gate evaluating tool call proposals against capabilities and session trust state."""
+    """Enterprise deterministic policy gate and tri-state risk arbitrator for autonomous agents."""
 
     DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
     SIMILARITY_THRESHOLD = 0.35
@@ -62,19 +65,12 @@ class PolicyGate:
         capability_registry: Optional[CapabilityRegistry] = None,
         network_guard: Optional[OutboundNetworkGuard] = None,
         dlp_engine: Optional[DataLossPreventionEngine] = None,
+        memory_guard: Optional[MemoryGuard] = None,
+        honeytoken_manager: Optional[HoneytokenManager] = None,
+        action_graph: Optional[ActionDependencyGraph] = None,
+        risk_engine: Optional[RiskEngine] = None,
     ) -> None:
-        """Initialize PolicyGate with embedding model, capability registry, network guard, and DLP.
-
-        Args:
-            model_name: SentenceTransformers model identifier.
-            device: Target torch device ('cuda', 'cpu'). Auto-selected if None.
-            lazy_load: If True, defer model loading until first similarity computation.
-            custom_high_impact_tools: Additional high-impact write tools to register.
-            custom_read_only_tools: Additional read-only tools to register.
-            capability_registry: Custom CapabilityRegistry instance.
-            network_guard: Custom OutboundNetworkGuard instance.
-            dlp_engine: Custom DataLossPreventionEngine instance.
-        """
+        """Initialize PolicyGate with security engines, behavioral graph, and risk arbitrator."""
         self.model_name = model_name
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -84,6 +80,10 @@ class PolicyGate:
         self.capability_registry = capability_registry or CapabilityRegistry()
         self.network_guard = network_guard or OutboundNetworkGuard()
         self.dlp = dlp_engine or DataLossPreventionEngine()
+        self.memory_guard = memory_guard or MemoryGuard()
+        self.honeytoken = honeytoken_manager or HoneytokenManager()
+        self.action_graph = action_graph or ActionDependencyGraph()
+        self.risk_engine = risk_engine or RiskEngine()
 
         self.high_impact_write_tools = set(self.HIGH_IMPACT_WRITE_TOOLS)
         if custom_high_impact_tools:
@@ -194,6 +194,7 @@ class PolicyGate:
                 intent_similarity_score=0.0,
                 blast_radius_contained=True,
                 network_verdict="FAIL_CLOSED",
+                risk_score=1.0,
             )
 
     def _evaluate_tool_call_internal(
@@ -210,19 +211,9 @@ class PolicyGate:
 
         is_tainted = session.is_session_tainted()
 
-        # Pre-scan arguments for DLP violations
+        # Step 1: Pre-scan arguments for DLP violations & Canary Tokens
         _, dlp_violations = self.dlp.sanitize_tool_args(args)
-
-        # Step 1: Untainted session fast-path check
-        if not is_tainted:
-            return PolicyDecision(
-                verdict=PolicyVerdict.ALLOW.value,
-                reason="Safe tool execution: Session is untainted with verified user provenance.",
-                intent_similarity_score=1.0,
-                blast_radius_contained=False,
-                dlp_violations=dlp_violations,
-                network_verdict="PASS",
-            )
+        is_canary_tripped, canary_id = self.honeytoken.check_exfiltration(serialized_args)
 
         inferred_cap = self.capability_registry.infer_capability(tool_name, args)
         if tool_proposal.inferred_capability != Capability.READ_PUBLIC:
@@ -232,19 +223,39 @@ class PolicyGate:
 
         similarity = self.compute_similarity(session.user_root_intent, action_description)
         is_detector_miss = bool(detector_scan.is_safe) if detector_scan is not None else True
+        detector_confidence = (
+            (1.0 - detector_scan.confidence_score)
+            if (detector_scan and detector_scan.is_safe)
+            else (detector_scan.confidence_score if detector_scan else (0.9 if is_tainted else 0.0))
+        )
 
-        # Step 2: Data Loss Prevention (DLP) Inspection
-        if dlp_violations and is_tainted:
+        # Step 2: Canary Honeypot Tripwire Check (Immediate Override -> BLOCK)
+        if is_canary_tripped:
             return PolicyDecision(
                 verdict=PolicyVerdict.BLOCK.value,
-                reason=f"DLP block: attempted exfiltration of {', '.join(dlp_violations)}.",
+                reason=f"Honeypot Canary Tripwire: Attempted exfiltration of active canary token '{canary_id}'.",
                 intent_similarity_score=round(similarity, 4),
                 blast_radius_contained=is_detector_miss,
                 dlp_violations=dlp_violations,
                 network_verdict="PASS",
+                risk_score=1.0,
+                canary_tripped=True,
             )
 
-        # Step 3: Outbound Network Guard & SSRF Protection
+        # Step 3: Untainted session check
+        if not is_tainted:
+            self.action_graph.record_node(session.session_id, capability, args)
+            return PolicyDecision(
+                verdict=PolicyVerdict.ALLOW.value,
+                reason="Safe tool execution: Session is untainted with verified user provenance.",
+                intent_similarity_score=1.0,
+                blast_radius_contained=False,
+                dlp_violations=dlp_violations,
+                network_verdict="PASS",
+                risk_score=0.0,
+            )
+
+        # Step 4: Outbound Network Guard & SSRF Protection
         candidate_urls = self._extract_all_urls(args)
         if tool_proposal.target_destination:
             candidate_urls.extend(self._extract_all_urls(tool_proposal.target_destination))
@@ -277,6 +288,7 @@ class PolicyGate:
                     blast_radius_contained=is_detector_miss,
                     dlp_violations=dlp_violations,
                     network_verdict=net_verdict,
+                    risk_score=1.0,
                 )
 
         # HTTP method and payload size validation
@@ -294,9 +306,38 @@ class PolicyGate:
                 blast_radius_contained=is_detector_miss,
                 dlp_violations=dlp_violations,
                 network_verdict="BLOCKED_METHOD",
+                risk_score=1.0,
             )
 
-        # Step 4: Capability Enforcement
+        # Step 5: Behavioral Action Dependency Graph Evaluation
+        is_valid_trans, trans_reason = self.action_graph.evaluate_transition(
+            session.session_id, capability, is_tainted=is_tainted
+        )
+        if not is_valid_trans:
+            return PolicyDecision(
+                verdict=PolicyVerdict.BLOCK.value,
+                reason=trans_reason,
+                intent_similarity_score=round(similarity, 4),
+                blast_radius_contained=is_detector_miss,
+                dlp_violations=dlp_violations,
+                network_verdict="PASS",
+                risk_score=1.0,
+                action_transition_valid=False,
+            )
+
+        # Step 6: Data Loss Prevention (DLP) Inspection
+        if dlp_violations and is_tainted:
+            return PolicyDecision(
+                verdict=PolicyVerdict.BLOCK.value,
+                reason=f"DLP block: attempted exfiltration of {', '.join(dlp_violations)}.",
+                intent_similarity_score=round(similarity, 4),
+                blast_radius_contained=is_detector_miss,
+                dlp_violations=dlp_violations,
+                network_verdict="PASS",
+                risk_score=1.0,
+            )
+
+        # Step 7: Strict Capability Enforcement
         if not self.capability_registry.is_allowed_for_tainted_session(capability):
             if similarity < self.SIMILARITY_THRESHOLD or capability in {
                 Capability.EXECUTE_CODE,
@@ -317,9 +358,10 @@ class PolicyGate:
                     blast_radius_contained=is_detector_miss,
                     dlp_violations=dlp_violations,
                     network_verdict="PASS",
+                    risk_score=0.90,
                 )
 
-        # Step 5: Data Exfiltration Channels & Semantic Divergence
+        # Step 8: Data Exfiltration Channels & Semantic Divergence
         has_exfil_channel = bool(self._exfil_regex.search(serialized_args))
         has_image_exfil = bool(self._image_tag_regex.search(serialized_args))
         unauthorized_url_egress = bool(
@@ -339,24 +381,50 @@ class PolicyGate:
                 blast_radius_contained=is_detector_miss,
                 dlp_violations=dlp_violations,
                 network_verdict="PASS",
+                risk_score=0.95,
             )
 
-        # High-impact tool semantic alignment check
-        is_high_impact = tool_name in self.high_impact_write_tools
-        if is_high_impact and similarity < self.SIMILARITY_THRESHOLD:
+        # Step 9: Multi-Factor Risk Scoring and Tri-State Decision via RiskEngine
+        risk_score, risk_verdict, breakdown = self.risk_engine.calculate_risk(
+            detector_score=detector_confidence,
+            is_tainted=is_tainted,
+            capability=capability,
+            intent_similarity=similarity,
+            canary_tripped=False,
+            transition_valid=True,
+            security_override=False,
+        )
+
+        if risk_verdict == PolicyVerdict.REQUIRE_HUMAN_APPROVAL:
             return PolicyDecision(
-                verdict=PolicyVerdict.BLOCK.value,
+                verdict=PolicyVerdict.REQUIRE_HUMAN_APPROVAL.value,
                 reason=(
-                    f"Lethal Trifecta: Tainted session attempting unauthorized high-impact tool '{tool_proposal.tool_name}' "
-                    f"(similarity score: {similarity:.4f} < threshold: {self.SIMILARITY_THRESHOLD})."
+                    f"Elevated Risk Threshold (score: {risk_score:.2f}): Tool '{tool_proposal.tool_name}' "
+                    f"requires human approval (intent similarity: {similarity:.2f})."
                 ),
                 intent_similarity_score=round(similarity, 4),
                 blast_radius_contained=is_detector_miss,
                 dlp_violations=dlp_violations,
                 network_verdict="PASS",
+                risk_score=risk_score,
             )
 
-        # Step 6: Safe Operation Permitted
+        if risk_verdict == PolicyVerdict.BLOCK:
+            return PolicyDecision(
+                verdict=PolicyVerdict.BLOCK.value,
+                reason=(
+                    f"Composite Risk Threshold Exceeded (score: {risk_score:.2f} >= {self.risk_engine.block_threshold}): "
+                    f"Tool execution blocked."
+                ),
+                intent_similarity_score=round(similarity, 4),
+                blast_radius_contained=is_detector_miss,
+                dlp_violations=dlp_violations,
+                network_verdict="PASS",
+                risk_score=risk_score,
+            )
+
+        # Step 10: Safe Operation Permitted -> Record node in action graph
+        self.action_graph.record_node(session.session_id, capability, args)
         return PolicyDecision(
             verdict=PolicyVerdict.ALLOW.value,
             reason=f"Safe operation: Tool '{tool_proposal.tool_name}' validated under capability and taint controls.",
@@ -364,4 +432,5 @@ class PolicyGate:
             blast_radius_contained=False,
             dlp_violations=dlp_violations,
             network_verdict="PASS",
+            risk_score=risk_score,
         )
