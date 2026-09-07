@@ -1,0 +1,41 @@
+version: "3.8"
+
+services:
+  aegis-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aegisagent:latest
+    container_name: aegis-security-gateway
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - AEGIS_DETECTOR_THRESHOLD=0.75
+      - AEGIS_STRICT_MODE=true
+      - AEGIS_AUDIT_LOG_PATH=/app/logs/audit_ledger.jsonl
+      - AEGIS_MODELS_CACHE=/opt/models_cache
+      - PYTHONUNBUFFERED=1
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    volumes:
+      - ./logs:/app/logs:rw
+    deploy:
+      resources:
+        limits:
+          cpus: "2.00"
+          memory: 4096M
+        reservations:
+          cpus: "0.50"
+          memory: 1024M
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/security/readiness', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

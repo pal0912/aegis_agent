@@ -208,8 +208,16 @@ class CryptographicLedger:
                 logger.error("Ledger verification failed with system error: %s", e)
                 return False, verified_count, f"System verification exception: {e}"
 
+    @property
+    def last_entry_hash(self) -> str:
+        with self._lock:
+            return self._last_entry_hash
+
+    verify_chain_integrity = verify_ledger_integrity
+
     def reset(self) -> None:
         """Reset ledger sequence state (primarily for test fixture isolation)."""
         with self._lock:
             self._current_sequence_id = 0
             self._last_entry_hash = GENESIS_PREV_HASH
+

@@ -64,7 +64,8 @@ class InjectionDetector:
     def _compile_heuristics(self) -> None:
         """Compile regex heuristic patterns for immediate rule-based filtering."""
         raw_patterns = [
-            ("IGNORE_INSTRUCTIONS", r"ignore\s+(all\s+)?(previous|prior)\s+instructions"),
+            ("IGNORE_INSTRUCTIONS", r"\b(ignore|disregard|forget)\s+(all\s+)?(previous|prior|past)\s+(instructions|rules|guidelines|directives|constraints|safety)"),
+            ("SYSTEM_TAG_INJECTION", r"<\/?(system|assistant|admin|developer|instruction)>"),
             ("SYSTEM_OVERRIDE", r"system\s+override"),
             ("DEVELOPER_MODE", r"you\s+are\s+now\s+in\s+developer\s+mode"),
             ("BEGIN_SYSTEM_TAG", r"---BEGIN\s+SYSTEM---"),

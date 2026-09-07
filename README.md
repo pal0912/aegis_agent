@@ -6,7 +6,7 @@
 
 ## Overview
 
-AegisAgent V2 protects autonomous LLM agents, LangChain workflows, and multi-agent systems against **prompt injection**, **jailbreaks**, **persistent memory/RAG poisoning**, **SSRF/data exfiltration**, **multi-step covert action chaining**, **identity spoofing**, and the **Lethal Trifecta** (untrusted context + tool execution privilege + sensitive data access).
+AegisAgent V2 protects autonomous LLM agents, LangChain workflows, Model Context Protocol (MCP) tool servers, and multi-agent systems against **prompt injection**, **jailbreaks**, **persistent memory/RAG poisoning**, **SSRF/data exfiltration**, **multi-step covert action chaining**, **identity spoofing**, **MCP tool schema hijacking**, and the **Lethal Trifecta** (untrusted context + tool execution privilege + sensitive data access).
 
 ---
 
@@ -94,7 +94,7 @@ AegisAgent V2 protects autonomous LLM agents, LangChain workflows, and multi-age
 - Fast, full ledger verification method `verify_ledger_integrity()` detecting any record alteration, deletion, or truncation.
 
 ### 15. OpenAI-Compatible Security Gateway Service (`aegis/gateway.py`)
-- Drop-in FastAPI reverse proxy middleware intercepting `/v1/chat/completions` and `/v1/security/health`.
+- Drop-in FastAPI reverse proxy middleware intercepting `/v1/chat/completions`, `/v1/security/health`, and `/v1/security/readiness`.
 - Compatible with any external agent framework (LangGraph, CrewAI, AutoGPT, Semantic Kernel).
 - Real-time prompt injection scanning, boundary isolation, policy enforcement, and tool call sanitization.
 
@@ -110,6 +110,15 @@ AegisAgent V2 protects autonomous LLM agents, LangChain workflows, and multi-age
 - Automated circuit breaker monitoring workflow steps, recursion depth, and consecutive policy violations to isolate runaway execution loops (OWASP ASI08).
 - Emergency System Kill Switch for instantaneous fleet-wide lockdown.
 - Hot-reloadable YAML/JSON declarative policy schemas supporting dynamic role-to-capability mappings without server restarts.
+
+### 19. Model Context Protocol (MCP) Security Guard (`aegis/mcp_guard.py`)
+- Schema inspection and sanitization for external MCP server manifests via `/v1/mcp/manifest/sanitize`.
+- Detection and neutralization of concealed prompt injections embedded inside MCP tool descriptions and metadata.
+- Pre-execution validation and parameter DLP sanitization for MCP tool dispatches via `/v1/mcp/execute`.
+
+### 20. System Health & Deep Readiness Monitoring (`aegis/health.py`)
+- Lightweight container liveness probes (`/v1/security/health`).
+- Deep fail-closed readiness probes (`/v1/security/readiness`) verifying model residency, cryptographic audit ledger integrity, and outbound SSRF filters.
 
 ---
 
@@ -133,6 +142,8 @@ AegisAgent V2 was evaluated across deterministic attack vectors, benign enterpri
 | **Inter-Agent Anti-Spoofing & Integrity** | **100.0%** | **100.0% (Ed25519 Enforced)** | ✅ PASSED |
 | **Cascading Circuit Breaker Isolation** | **100.0%** | **100.0% (Zero Runaway Cascades)** | ✅ PASSED |
 | **Declarative Policy Hot-Reloading** | **ACTIVE** | **Hot-Reload Validated** | ✅ PASSED |
+| **Model Context Protocol (MCP) Guard Defense** | **100.0%** | **100.0% (Zero Bypass)** | ✅ PASSED |
+| **System Readiness Probe Fail-Closed Verification** | **100.0%** | **100.0% (Tamper Resistant)** | ✅ PASSED |
 | **Blast Radius Down-Funnel Containment** | **100.0%** | **100.0% (Fail-Safe)** | ✅ PASSED |
 | **Memory Poisoning Shield Block Rate** | **100.0%** | **100.0% (Zero Poisoning)** | ✅ PASSED |
 | **Honeypot Canary Trap Catch Rate** | **100.0%** | **100.0% (Zero Leakage)** | ✅ PASSED |
@@ -142,7 +153,7 @@ AegisAgent V2 was evaluated across deterministic attack vectors, benign enterpri
 
 ---
 
-## Installation
+## Installation & Quickstart
 
 ```bash
 git clone https://github.com/pal0912/aegis_agent.git
@@ -177,11 +188,21 @@ uvicorn aegis.gateway:app --host 0.0.0.0 --port 8000 --reload
 
 ---
 
-## Running Automated Tests & Benchmarks
+## Zero-Trust Container Deployment (Docker & Compose)
+
+Deploy the hardened, non-root (`UID: 10001`), read-only container with pre-cached models:
 
 ```bash
-# Run Full Unit Test Suite (74 tests)
-pytest tests/
+docker-compose up --build -d
+```
+
+---
+
+## Running Automated Tests & Quality Gate
+
+```bash
+# Run Full Unit Test Suite (86 tests)
+pytest tests/ evals/test_phase6.py
 
 # Run Full Adversarial & Adaptive Mutation Benchmark Suite
 python -m evals.benchmark

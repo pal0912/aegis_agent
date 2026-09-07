@@ -43,6 +43,12 @@ class ContextSanitizer:
             r"<\s*untrusted_context\b[^>]*>", re.IGNORECASE
         )
 
+        # Strip system / instruction / assistant fake tags
+        self._system_tag_regex = re.compile(
+            r"<\s*/?\s*(system|assistant|admin|developer|instruction)\b[^>]*>",
+            re.IGNORECASE,
+        )
+
     def strip_dangerous_tags(self, text: str) -> str:
         """Remove dangerous HTML tags and Markdown image exfiltration payloads.
 
@@ -58,6 +64,7 @@ class ContextSanitizer:
         cleaned = self._script_regex.sub("", text)
         cleaned = self._iframe_regex.sub("", cleaned)
         cleaned = self._embed_regex.sub("", cleaned)
+        cleaned = self._system_tag_regex.sub("", cleaned)
         cleaned = self._md_image_regex.sub("", cleaned)
         return cleaned
 

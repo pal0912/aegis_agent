@@ -1,7 +1,8 @@
 """OpenAI-compatible security gateway and reverse proxy for AegisAgent V2.
 
 Provides drop-in security interception for external agent frameworks (LangGraph, CrewAI, AutoGPT),
-evaluating incoming chat completions, prompt injections, and proposed tool calls.
+evaluating incoming chat completions, prompt injections, proposed tool calls, Model Context Protocol (MCP) servers,
+and deep system health/readiness monitoring.
 """
 
 import json
@@ -17,6 +18,8 @@ from pydantic import BaseModel, Field
 from aegis.audit import AuditLogger
 from aegis.detector import AegisDetector
 from aegis.dlp import DataLossPreventionEngine
+from aegis.health import SystemHealthMonitor
+from aegis.mcp_guard import MCPSecurityGuard
 from aegis.policy_gate import PolicyGate
 from aegis.sanitizer import ContextSanitizer
 from aegis.taint import SessionContext
@@ -54,17 +57,49 @@ class SecurityHealthResponse(BaseModel):
     timestamp: float
 
 
+# --- MCP Gateway Schemas ---
+class MCPManifestSanitizeRequest(BaseModel):
+    server_name: Optional[str] = "mcp-server"
+    manifest: Dict[str, Any] = Field(..., description="MCP server manifest containing tools array")
+
+
+class MCPManifestSanitizeResponse(BaseModel):
+    server_name: str
+    sanitized_manifest: Dict[str, Any]
+    violations_detected: List[str]
+    is_clean: bool
+
+
+class MCPExecuteRequest(BaseModel):
+    server_name: str
+    tool_name: str
+    arguments: Dict[str, Any] = Field(default_factory=dict)
+    session_id: Optional[str] = None
+    root_intent: Optional[str] = "Execute tool operation"
+    is_tainted: Optional[bool] = False
+
+
+class MCPExecuteResponse(BaseModel):
+    authorized: bool
+    status_reason: str
+    sanitized_arguments: Dict[str, Any]
+    server_name: str
+    tool_name: str
+
+
 def create_gateway_app(
     detector: Optional[AegisDetector] = None,
     policy_gate: Optional[PolicyGate] = None,
     audit_logger: Optional[AuditLogger] = None,
     sanitizer: Optional[ContextSanitizer] = None,
     dlp_engine: Optional[DataLossPreventionEngine] = None,
+    mcp_guard: Optional[MCPSecurityGuard] = None,
+    health_monitor: Optional[SystemHealthMonitor] = None,
 ) -> FastAPI:
     """Factory creating the FastAPI OpenAI-compatible Aegis security gateway app."""
     app = FastAPI(
         title="AegisAgent Security Gateway",
-        description="OpenAI-compatible reverse proxy middleware enforcing defense-in-depth AI security.",
+        description="OpenAI-compatible reverse proxy middleware enforcing defense-in-depth AI security & MCP validation.",
         version="2.0.0",
     )
 
@@ -74,6 +109,14 @@ def create_gateway_app(
     audit = audit_logger or AuditLogger.get_instance()
     san = sanitizer or ContextSanitizer()
     dlp = dlp_engine or DataLossPreventionEngine()
+    mcp = mcp_guard or MCPSecurityGuard(
+        detector=det,
+        dlp_engine=dlp,
+        policy_gate=gate,
+        sanitizer=san,
+        audit_logger=audit,
+    )
+    health = health_monitor or SystemHealthMonitor(ledger=audit.ledger)
     tracer = SecurityTracer(dlp_engine=dlp)
 
     @app.get("/v1/security/health", response_model=SecurityHealthResponse)
@@ -97,8 +140,60 @@ def create_gateway_app(
                 "Host-Isolated Code Execution Sandbox",
                 "Cryptographic Tamper-Evident Ledger",
                 "OpenTelemetry MITRE ATLAS Security Tracer",
+                "Model Context Protocol (MCP) Security Guard",
+                "Multi-Agent Non-Human Identity (NHI) Token Gate",
             ],
             timestamp=time.time(),
+        )
+
+    @app.get("/v1/security/readiness")
+    async def security_readiness():
+        """Deep readiness probe verifying model memory residency, cryptographic audit ledger, and SSRF filter."""
+        readiness_data = health.check_readiness()
+        return JSONResponse(
+            status_code=readiness_data.get("http_status_code", 200),
+            content=readiness_data,
+        )
+
+    @app.post("/v1/mcp/manifest/sanitize", response_model=MCPManifestSanitizeResponse)
+    async def sanitize_mcp_manifest_endpoint(req: MCPManifestSanitizeRequest):
+        """Inspect and sanitize an external MCP server manifest, stripping injected prompt instructions."""
+        sanitized_manifest, violations = mcp.sanitize_mcp_manifest(req.manifest)
+        return MCPManifestSanitizeResponse(
+            server_name=req.server_name or "mcp-server",
+            sanitized_manifest=sanitized_manifest,
+            violations_detected=violations,
+            is_clean=len(violations) == 0,
+        )
+
+    @app.post("/v1/mcp/execute", response_model=MCPExecuteResponse)
+    async def execute_mcp_endpoint(req: MCPExecuteRequest):
+        """Intercept and validate an outbound MCP tool execution call against taint policies and network safety."""
+        session_id = req.session_id or f"mcp-session-{uuid.uuid4().hex[:8]}"
+        session = SessionContext(
+            user_root_intent=req.root_intent or "MCP Tool Execution",
+            session_id=session_id,
+        )
+        if req.is_tainted:
+            session.quarantine_session(reason="Tainted MCP context dispatch")
+
+        authorized, reason, sanitized_args = mcp.intercept_mcp_call(
+            server_name=req.server_name,
+            tool_name=req.tool_name,
+            arguments=req.arguments,
+            session_context=session,
+        )
+
+        status_code = status.HTTP_200_OK if authorized else status.HTTP_403_FORBIDDEN
+        return JSONResponse(
+            status_code=status_code,
+            content={
+                "authorized": authorized,
+                "status_reason": reason,
+                "sanitized_arguments": sanitized_args,
+                "server_name": req.server_name,
+                "tool_name": req.tool_name,
+            },
         )
 
     @app.post("/v1/chat/completions")

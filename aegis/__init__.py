@@ -20,10 +20,12 @@ from aegis.declarative_policy import (
 from aegis.detector import AegisDetector, InjectionDetector
 from aegis.dlp import DataLossPreventionEngine
 from aegis.gateway import create_gateway_app
+from aegis.health import SystemHealthMonitor
 from aegis.honeytoken import HoneytokenManager
 from aegis.identity import AgentIdentity, AgentIdentityManager
 from aegis.inter_agent import InterAgentChannelGuard, InterAgentMessage
 from aegis.ledger import CryptographicLedger
+from aegis.mcp_guard import MCPSecurityGuard
 from aegis.memory_guard import MemoryEntry, MemoryGuard
 from aegis.middleware import AegisToolWrapper, aegis_guard
 from aegis.multimodal import MultimodalGuard
@@ -96,5 +98,6 @@ __all__ = [
     "GlobalPolicyConfig",
     "DeclarativePolicySchema",
     "DeclarativePolicyEngine",
+    "MCPSecurityGuard",
+    "SystemHealthMonitor",
 ]
-
