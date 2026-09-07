@@ -62,6 +62,8 @@ htmlcov/
 .streamlit/
 
 # Documents and scratch binaries
+1NPDPRO5.DOC
+1NPDPRO5.doc
 *.DOC
 *.doc
 *.docx
