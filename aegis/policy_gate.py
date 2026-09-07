@@ -107,6 +107,7 @@ class PolicyGate:
         self.declarative_policy = declarative_policy or DeclarativePolicyEngine()
         self.identity_manager = identity_manager or AgentIdentityManager()
         self.data_lineage = data_lineage or DataLineageTracker()
+        self.lineage_tracker = self.data_lineage
         self.behavioral_guard = behavioral_guard or BehavioralGuard()
 
         self.high_impact_write_tools = set(self.HIGH_IMPACT_WRITE_TOOLS)
