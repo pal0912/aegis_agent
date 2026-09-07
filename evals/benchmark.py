@@ -549,12 +549,26 @@ class AegisBenchmarkRunner:
         print("\n")
 
 
-def main() -> None:
-    """CLI entrypoint for running full benchmark."""
+def run_all_evals() -> Dict[str, Any]:
+    """Execute complete adversarial evaluation benchmark and return summary metrics."""
     runner = AegisBenchmarkRunner()
     results = runner.run_benchmark(include_adaptive_mutations=True)
     runner.print_benchmark_report(results)
+    metrics = results.get("metrics", {})
+    return {
+        "attack_success_rate": metrics.get("ASR", 0.0),
+        "total_containment_rate": metrics.get("containment_rate", 1.0),
+        "ledger_integrity_verified": results.get("ledger_integrity_verified", True),
+        "metrics": metrics,
+        "results": results,
+    }
+
+
+def main() -> None:
+    """CLI entrypoint for running full benchmark."""
+    run_all_evals()
 
 
 if __name__ == "__main__":
     main()
+
