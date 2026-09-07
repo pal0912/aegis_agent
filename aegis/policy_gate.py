@@ -1,7 +1,8 @@
 """Deterministic policy gate, capability enforcement, and multi-factor risk engine for AegisAgent V2.
 
 Orchestrates capability arbitration, outbound network guard, DLP secret protection,
-honeypot canary traps, behavioral action dependency graph validation, and tri-state HITL authorization.
+honeypot canary traps, behavioral anomaly detection, field-level data lineage,
+action dependency graph validation, and tri-state HITL authorization.
 """
 
 import json
@@ -14,9 +15,11 @@ import torch
 from sentence_transformers import SentenceTransformer
 
 from aegis.action_graph import ActionDependencyGraph
+from aegis.behavioral_guard import BehavioralGuard
 from aegis.capabilities import CapabilityRegistry
 from aegis.circuit_breaker import AgentCircuitBreaker
 from aegis.consensus import DualAgentConsensusGate
+from aegis.data_lineage import DataLineageTracker
 from aegis.declarative_policy import DeclarativePolicyEngine
 from aegis.dlp import DataLossPreventionEngine
 from aegis.honeytoken import HoneytokenManager
@@ -27,7 +30,9 @@ from aegis.risk_engine import RiskEngine
 from aegis.sandbox import IsolatedCodeSandbox
 from aegis.taint import SessionContext
 from aegis.types import (
+    BehavioralState,
     Capability,
+    FieldTrustLevel,
     PolicyDecision,
     PolicyVerdict,
     ScanResult,
@@ -79,6 +84,8 @@ class PolicyGate:
         circuit_breaker: Optional[AgentCircuitBreaker] = None,
         declarative_policy: Optional[DeclarativePolicyEngine] = None,
         identity_manager: Optional[AgentIdentityManager] = None,
+        data_lineage: Optional[DataLineageTracker] = None,
+        behavioral_guard: Optional[BehavioralGuard] = None,
     ) -> None:
         """Initialize PolicyGate with security engines, behavioral graph, consensus arbitrator, and circuit breaker."""
         self.model_name = model_name
@@ -99,6 +106,8 @@ class PolicyGate:
         self.circuit_breaker = circuit_breaker or AgentCircuitBreaker()
         self.declarative_policy = declarative_policy or DeclarativePolicyEngine()
         self.identity_manager = identity_manager or AgentIdentityManager()
+        self.data_lineage = data_lineage or DataLineageTracker()
+        self.behavioral_guard = behavioral_guard or BehavioralGuard()
 
         self.high_impact_write_tools = set(self.HIGH_IMPACT_WRITE_TOOLS)
         if custom_high_impact_tools:
@@ -158,17 +167,17 @@ class PolicyGate:
         vec_a = embeddings[0]
         vec_b = embeddings[1]
 
-        norm_a = float(np.linalg.norm(vec_a))
-        norm_b = float(np.linalg.norm(vec_b))
+        norm_a = np.linalg.norm(vec_a)
+        norm_b = np.linalg.norm(vec_b)
 
-        if norm_a < 1e-9 or norm_b < 1e-9:
+        if norm_a == 0 or norm_b == 0:
             return 0.0
 
-        cosine_sim = float(np.dot(vec_a, vec_b) / (norm_a * norm_b))
-        return float(np.clip(cosine_sim, -1.0, 1.0))
+        cos_sim = float(np.dot(vec_a, vec_b) / (norm_a * norm_b))
+        return float(np.clip(cos_sim, -1.0, 1.0))
 
     def _extract_all_urls(self, obj: Any) -> List[str]:
-        """Recursively extract all URL strings from tool arguments or structures."""
+        """Recursively scan arguments dictionary for URLs."""
         urls: List[str] = []
         if isinstance(obj, str):
             for match in self._url_regex.finditer(obj):
@@ -187,14 +196,21 @@ class PolicyGate:
         tool_proposal: ToolCallProposal,
         detector_scan: Optional[ScanResult] = None,
     ) -> PolicyDecision:
-        """Evaluate a proposed tool call through capability arbitration, network guard, DLP, and semantic alignment.
+        """Evaluate a proposed tool invocation across all security dimensions.
 
-        Fails closed on any unexpected exception.
-
-        Args:
-            session: Active agent execution context containing root intent and taint state.
-            tool_proposal: Proposed tool name and arguments.
-            detector_scan: Optional upstream prompt injection scan result.
+        Enforces:
+        0. Circuit breaker cascading isolation & step limit check
+        0b. Declarative role-based capability permissions
+        0c. Behavioral anomaly guard state rules (read-to-egress, reconnaissance, flood loops)
+        1. Honeytoken canary tripwire check
+        2. Field-level data lineage & argument taint verification
+        3. Outbound network guard & SSRF IP validation
+        4. Behavioral action dependency graph check
+        5. Data Loss Prevention (DLP) secret & PII inspection
+        6. Static AST analysis for code execution tools
+        7. Strict capability enforcement under tainted session
+        8. Dual-agent consensus evaluation for high-impact actions
+        9. Multi-factor quantitative risk scoring & tri-state decision
 
         Returns:
             Deterministic PolicyDecision model.
@@ -277,6 +293,55 @@ class PolicyGate:
                     risk_score=1.0,
                 )
 
+        # Step 0c: Behavioral Anomaly Guard Evaluation
+        beh_state, beh_score, beh_rules = self.behavioral_guard.evaluate_action_step(
+            session_id=session.session_id,
+            proposed_capability=capability,
+            proposed_tool=tool_name,
+            user_intent=session.user_root_intent,
+        )
+
+        # Step 0d: Field-Level Data Lineage Inspection
+        session_lineage = getattr(session, "field_lineage", {})
+        arg_trust_map = self.data_lineage.inspect_tool_arguments(args, session_lineage)
+        field_violations = [
+            arg_name
+            for arg_name, trust in arg_trust_map.items()
+            if trust in (FieldTrustLevel.UNTRUSTED, FieldTrustLevel.DERIVED_UNTRUSTED)
+        ]
+
+        # If behavioral anomaly is CRITICAL -> immediate block override
+        if beh_state == BehavioralState.CRITICAL:
+            self.circuit_breaker.record_policy_violation(session.session_id)
+            return PolicyDecision(
+                verdict=PolicyVerdict.BLOCK.value,
+                reason=f"Blocked by Behavioral Guard (Rule: {'; '.join(beh_rules)}, Anomaly Score: {beh_score:.2f})",
+                intent_similarity_score=round(similarity, 4),
+                blast_radius_contained=is_detector_miss,
+                dlp_violations=dlp_violations,
+                network_verdict="PASS",
+                risk_score=1.0,
+                behavioral_state=beh_state.value,
+                behavioral_score=beh_score,
+                field_lineage_violations=field_violations,
+            )
+
+        # If a sensitive or state-mutating tool receives an UNTRUSTED/DERIVED argument -> block via field lineage
+        if field_violations and capability not in (Capability.READ_PUBLIC, Capability.READ_PRIVATE) and is_tainted:
+            self.circuit_breaker.record_policy_violation(session.session_id)
+            return PolicyDecision(
+                verdict=PolicyVerdict.BLOCK.value,
+                reason=f"Field-Level Taint Violation: Argument '{field_violations[0]}' contains untrusted data origin.",
+                intent_similarity_score=round(similarity, 4),
+                blast_radius_contained=is_detector_miss,
+                dlp_violations=dlp_violations,
+                network_verdict="PASS",
+                risk_score=1.0,
+                behavioral_state=beh_state.value,
+                behavioral_score=beh_score,
+                field_lineage_violations=field_violations,
+            )
+
         # Step 2: Canary Honeypot Tripwire Check (Immediate Override -> BLOCK)
         if is_canary_tripped:
             self.circuit_breaker.record_policy_violation(session.session_id)
@@ -289,10 +354,13 @@ class PolicyGate:
                 network_verdict="PASS",
                 risk_score=1.0,
                 canary_tripped=True,
+                behavioral_state=beh_state.value,
+                behavioral_score=beh_score,
+                field_lineage_violations=field_violations,
             )
 
         # Step 3: Untainted session check
-        if not is_tainted:
+        if not is_tainted and not field_violations and beh_state == BehavioralState.NORMAL:
             self.action_graph.record_node(session.session_id, capability, args)
             self.circuit_breaker.record_success(session.session_id)
             return PolicyDecision(
@@ -303,6 +371,9 @@ class PolicyGate:
                 dlp_violations=dlp_violations,
                 network_verdict="PASS",
                 risk_score=0.0,
+                behavioral_state=beh_state.value,
+                behavioral_score=beh_score,
+                field_lineage_violations=[],
             )
 
         # Step 4: Outbound Network Guard & SSRF Protection
@@ -339,6 +410,9 @@ class PolicyGate:
                     dlp_violations=dlp_violations,
                     network_verdict=net_verdict,
                     risk_score=1.0,
+                    behavioral_state=beh_state.value,
+                    behavioral_score=beh_score,
+                    field_lineage_violations=field_violations,
                 )
 
         # HTTP method and payload size validation
@@ -357,6 +431,9 @@ class PolicyGate:
                 dlp_violations=dlp_violations,
                 network_verdict="BLOCKED_METHOD",
                 risk_score=1.0,
+                behavioral_state=beh_state.value,
+                behavioral_score=beh_score,
+                field_lineage_violations=field_violations,
             )
 
         # Step 5: Behavioral Action Dependency Graph Evaluation
@@ -373,6 +450,9 @@ class PolicyGate:
                 network_verdict="PASS",
                 risk_score=1.0,
                 action_transition_valid=False,
+                behavioral_state=beh_state.value,
+                behavioral_score=beh_score,
+                field_lineage_violations=field_violations,
             )
 
         # Step 6: Data Loss Prevention (DLP) Inspection for Sensitive Secrets & PII
@@ -388,6 +468,9 @@ class PolicyGate:
                 dlp_violations=dlp_violations,
                 network_verdict="PASS",
                 risk_score=1.0,
+                behavioral_state=beh_state.value,
+                behavioral_score=beh_score,
+                field_lineage_violations=field_violations,
             )
 
         # Step 7: Static AST Analysis for Code Execution Proposals
@@ -404,6 +487,9 @@ class PolicyGate:
                         dlp_violations=dlp_violations,
                         network_verdict="PASS",
                         risk_score=1.0,
+                        behavioral_state=beh_state.value,
+                        behavioral_score=beh_score,
+                        field_lineage_violations=field_violations,
                     )
 
         # Step 8: Strict Capability Enforcement for Critical Operations & High Drift
@@ -433,6 +519,9 @@ class PolicyGate:
                     dlp_violations=dlp_violations,
                     network_verdict="PASS",
                     risk_score=0.90,
+                    behavioral_state=beh_state.value,
+                    behavioral_score=beh_score,
+                    field_lineage_violations=field_violations,
                 )
 
         # Step 9: Data Exfiltration Channels & Semantic Divergence
@@ -456,6 +545,9 @@ class PolicyGate:
                 dlp_violations=dlp_violations,
                 network_verdict="PASS",
                 risk_score=0.95,
+                behavioral_state=beh_state.value,
+                behavioral_score=beh_score,
+                field_lineage_violations=field_violations,
             )
 
         # Step 10: Dual-Agent Consensus & Shadow Evaluator for High-Impact Actions
@@ -481,6 +573,9 @@ class PolicyGate:
                     risk_score=0.95,
                     consensus_approved=False,
                     consensus_details=cns_details,
+                    behavioral_state=beh_state.value,
+                    behavioral_score=beh_score,
+                    field_lineage_violations=field_violations,
                 )
 
         # Step 11: Multi-Factor Risk Scoring and Tri-State Decision via RiskEngine
@@ -492,6 +587,8 @@ class PolicyGate:
             canary_tripped=False,
             transition_valid=True,
             security_override=False,
+            behavioral_score=beh_score,
+            behavioral_state=beh_state,
         )
 
         if risk_verdict == PolicyVerdict.REQUIRE_HUMAN_APPROVAL:
@@ -508,6 +605,9 @@ class PolicyGate:
                 risk_score=risk_score,
                 consensus_approved=consensus_approved,
                 consensus_details=consensus_details,
+                behavioral_state=beh_state.value,
+                behavioral_score=beh_score,
+                field_lineage_violations=field_violations,
             )
 
         if risk_verdict == PolicyVerdict.BLOCK:
@@ -524,13 +624,16 @@ class PolicyGate:
                 risk_score=risk_score,
                 consensus_approved=consensus_approved,
                 consensus_details=consensus_details,
+                behavioral_state=beh_state.value,
+                behavioral_score=beh_score,
+                field_lineage_violations=field_violations,
             )
 
         # Step 12: Safe Operation Permitted -> Record node in action graph
         self.action_graph.record_node(session.session_id, capability, args)
         return PolicyDecision(
             verdict=PolicyVerdict.ALLOW.value,
-            reason=f"Safe operation: Tool '{tool_proposal.tool_name}' validated under capability and taint controls.",
+            reason=f"Safe operation: Tool '{tool_proposal.tool_name}' validated under capability, lineage, and taint controls.",
             intent_similarity_score=round(similarity, 4),
             blast_radius_contained=False,
             dlp_violations=dlp_violations,
@@ -538,9 +641,11 @@ class PolicyGate:
             risk_score=risk_score,
             consensus_approved=consensus_approved,
             consensus_details=consensus_details,
+            behavioral_state=beh_state.value,
+            behavioral_score=beh_score,
+            field_lineage_violations=[],
         )
 
     def execute_sandboxed_tool(self, code: str, timeout_sec: Optional[float] = None) -> dict[str, Any]:
         """Execute Python code in the ephemeral isolated sandbox environment."""
         return self.sandbox.execute_sandboxed(code, timeout_sec=timeout_sec)
-

@@ -3,6 +3,7 @@
 
 from aegis.action_graph import ActionDependencyGraph, ActionNode
 from aegis.audit import AuditLogger
+from aegis.behavioral_guard import BehavioralGuard
 from aegis.capabilities import CapabilityRegistry
 from aegis.circuit_breaker import (
     AgentCircuitBreaker,
@@ -10,6 +11,7 @@ from aegis.circuit_breaker import (
     CircuitState,
 )
 from aegis.consensus import DualAgentConsensusGate
+from aegis.data_lineage import DataLineageTracker
 from aegis.declarative_policy import (
     DeclarativePolicyEngine,
     DeclarativePolicySchema,
@@ -38,7 +40,10 @@ from aegis.taint import SessionContext
 from aegis.tracer import SecurityTracer
 from aegis.types import (
     AuditEvent,
+    BehavioralState,
     Capability,
+    FieldProvenance,
+    FieldTrustLevel,
     MitreAtlasTechnique,
     MultiTierOutcome,
     PolicyDecision,
@@ -53,6 +58,9 @@ from aegis.types import (
 __version__ = "2.0.0"
 __all__ = [
     "TrustLevel",
+    "FieldTrustLevel",
+    "FieldProvenance",
+    "BehavioralState",
     "ToolPrivilege",
     "Capability",
     "PolicyVerdict",
@@ -100,4 +108,6 @@ __all__ = [
     "DeclarativePolicyEngine",
     "MCPSecurityGuard",
     "SystemHealthMonitor",
+    "DataLineageTracker",
+    "BehavioralGuard",
 ]

@@ -20,6 +20,53 @@ class TrustLevel(str, Enum):
     QUARANTINED = "QUARANTINED"  # Content flagged as an active exploit payload.
 
 
+class FieldTrustLevel(str, Enum):
+    """Fine-grained field-level provenance trust classifications."""
+
+    TRUSTED = "TRUSTED"
+    UNTRUSTED = "UNTRUSTED"
+    DERIVED_UNTRUSTED = "DERIVED_UNTRUSTED"
+
+
+class FieldProvenance(BaseModel):
+    """Detailed metadata and cryptographic signature for a specific data field or key-path."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    path: str = Field(
+        ...,
+        description="Dot-delimited JSON-pointer keypath (e.g. 'response.data[0].notes').",
+    )
+    trust: FieldTrustLevel = Field(
+        ...,
+        description="Assigned field trust classification.",
+    )
+    source: str = Field(
+        ...,
+        description="Source identifier (e.g. 'user_prompt', 'web_search:url', 'database:users').",
+    )
+    timestamp: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat(),
+        description="ISO 8601 UTC timestamp of field ingestion or transformation.",
+    )
+    value_hash: str = Field(
+        ...,
+        min_length=64,
+        max_length=64,
+        description="SHA-256 hash of the field value for mutation and substring tracking.",
+    )
+
+
+class BehavioralState(str, Enum):
+    """Runtime behavioral anomaly states emitted by the behavioral guard engine."""
+
+    NORMAL = "NORMAL"
+    SUSPICIOUS = "SUSPICIOUS"
+    ANOMALOUS = "ANOMALOUS"
+    CRITICAL = "CRITICAL"
+
+
+
 class ToolPrivilege(str, Enum):
     """Categorizes tools based on risk level and state mutation capacity."""
 
@@ -175,6 +222,20 @@ class PolicyDecision(BaseModel):
     sandboxed_execution: Optional[dict[str, Any]] = Field(
         default=None,
         description="Details of ephemeral sandbox execution if code execution was invoked.",
+    )
+    behavioral_state: Optional[str] = Field(
+        default=None,
+        description="Assigned behavioral anomaly state ('NORMAL', 'SUSPICIOUS', 'ANOMALOUS', 'CRITICAL').",
+    )
+    behavioral_score: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Quantitative anomaly score computed by the behavioral guard.",
+    )
+    field_lineage_violations: List[str] = Field(
+        default_factory=list,
+        description="Specific argument paths flagged for carrying untrusted data origins.",
     )
 
     @field_validator("verdict")

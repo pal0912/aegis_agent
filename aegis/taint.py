@@ -8,11 +8,11 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 import uuid
 
-from aegis.types import AuditEvent, TrustLevel
+from aegis.types import AuditEvent, FieldProvenance, FieldTrustLevel, TrustLevel
 
 
 class SessionContext:
-    """Tracks session taint state, trust transitions, and input provenance history."""
+    """Tracks session taint state, trust transitions, input provenance history, and field-level lineage."""
 
     def __init__(
         self,
@@ -22,6 +22,7 @@ class SessionContext:
         trust_level: Any = TrustLevel.TRUSTED,
         root_intent: Optional[str] = None,
         role: Optional[str] = None,
+        field_lineage: Optional[Dict[str, FieldProvenance]] = None,
     ) -> None:
         """Initialize new agent session context with root verified intent.
 
@@ -32,12 +33,14 @@ class SessionContext:
             trust_level: Initial trust level classification.
             root_intent: Backward-compatible alias for user_root_intent.
             role: Optional assigned agent role for declarative policy enforcement.
+            field_lineage: Optional mapping of field paths to FieldProvenance records.
         """
         intent = user_root_intent if user_root_intent is not None else (root_intent or "")
         self.session_id: str = session_id or str(uuid.uuid4())
         self.user_root_intent: str = intent
         self.is_tainted: bool = is_tainted
         self.role: Optional[str] = role
+        self.field_lineage: Dict[str, FieldProvenance] = dict(field_lineage) if field_lineage else {}
 
         if isinstance(trust_level, TrustLevel):
             self.trust_level = trust_level
@@ -58,6 +61,15 @@ class SessionContext:
                 "trust_level": self.trust_level.value,
             }
         ]
+
+    def record_field_provenance(self, provenance_map: Dict[str, FieldProvenance]) -> None:
+        """Update field-level lineage records for the active session context."""
+        self.field_lineage.update(provenance_map)
+
+    def get_field_trust(self, path: str) -> Optional[FieldTrustLevel]:
+        """Retrieve the trust level of a specific field path if recorded in lineage."""
+        prov = self.field_lineage.get(path)
+        return prov.trust if prov else None
 
     def ingest_untrusted_data(self, source_name: str, raw_text: str) -> None:
         """Ingest untrusted third-party payload, permanently tainting the session context.

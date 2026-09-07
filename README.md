@@ -116,9 +116,19 @@ AegisAgent V2 protects autonomous LLM agents, LangChain workflows, Model Context
 - Detection and neutralization of concealed prompt injections embedded inside MCP tool descriptions and metadata.
 - Pre-execution validation and parameter DLP sanitization for MCP tool dispatches via `/v1/mcp/execute`.
 
-### 20. System Health & Deep Readiness Monitoring (`aegis/health.py`)
-- Lightweight container liveness probes (`/v1/security/health`).
-- Deep fail-closed readiness probes (`/v1/security/readiness`) verifying model residency, cryptographic audit ledger integrity, and outbound SSRF filters.
+### 21. Field-Level Data Lineage & Fine-Grained Provenance (`aegis/data_lineage.py`)
+- Granular path-level trust tagging across nested JSON, dictionaries, lists, and tool arguments (`FieldTrustLevel`: `TRUSTED`, `UNTRUSTED`, `DERIVED_UNTRUSTED`).
+- Conservative taint derivation ensuring transformations combining clean data with untrusted paths strictly preserve untrusted status.
+- Tool argument inspector preventing over-blocking of clean arguments in partially tainted sessions.
+
+### 22. Deterministic Behavioral Anomaly Guard & Sequence Automaton (`aegis/behavioral_guard.py`)
+- Rule-based state automaton tracking multi-step tool execution sequences across sliding windows (`BehavioralState`: `NORMAL`, `SUSPICIOUS`, `ANOMALOUS`, `CRITICAL`).
+- Rule-based threat interception:
+  - `BEH-01`: Read Private Data $\rightarrow$ External Network Egress (Exfiltration Interception).
+  - `BEH-02`: Sudden Capability Escalation Jump (e.g., `READ_PUBLIC` $\rightarrow$ `EXECUTE_CODE` / `ADMIN`).
+  - `BEH-03`: Excessive Runaway Tool Flooding & Recursive Execution Loops.
+  - `BEH-04`: Multi-Step Reconnaissance Chaining (`WEB_SEARCH` $\rightarrow$ `READ_FILE` $\rightarrow$ `HTTP_EGRESS`).
+- Direct integration into `RiskEngine` enforcing immediate fail-closed `BLOCK` on `CRITICAL` anomaly states.
 
 ---
 

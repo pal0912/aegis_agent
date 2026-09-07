@@ -139,10 +139,16 @@ class SecurityTracer:
             if policy_decision.memory_rollback_triggered or "memory" in reason_str or "poison" in reason_str:
                 techniques.append(MitreAtlasTechnique.CONTEXT_POISONING.value)
 
-            if "exfiltration" in reason_str or policy_decision.dlp_violations:
+            if "exfiltration" in reason_str or policy_decision.dlp_violations or policy_decision.field_lineage_violations:
                 techniques.append(MitreAtlasTechnique.EXFILTRATION_SIDE_CHANNELS.value)
 
-            if capability in {Capability.EXECUTE_CODE, Capability.ADMIN} or "shell" in reason_str or "command" in reason_str:
+            if (
+                capability in {Capability.EXECUTE_CODE, Capability.ADMIN}
+                or "shell" in reason_str
+                or "command" in reason_str
+                or policy_decision.behavioral_state == "CRITICAL"
+                or "behavioral guard" in reason_str
+            ):
                 techniques.append(MitreAtlasTechnique.UNAUTHORIZED_COMMAND_EXECUTION.value)
 
         # Default fallback if blocked without specific match
