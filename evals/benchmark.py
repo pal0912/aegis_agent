@@ -106,7 +106,8 @@ class AegisBenchmarkRunner:
             t_scan = (time.perf_counter() - t0) * 1000.0
             scan_latencies.append(t_scan)
 
-            session = SessionContext(user_root_intent=root_intent)
+            atk_root_intent = atk.get("user_root_intent", root_intent)
+            session = SessionContext(user_root_intent=atk_root_intent)
             session.ingest_untrusted_data(source_name=atk["name"], raw_text=atk["payload"])
 
             # Phase 2: Memory Guard evaluation if attack targets memory poisoning

@@ -325,11 +325,14 @@ class PolicyGate:
                 action_transition_valid=False,
             )
 
-        # Step 6: Data Loss Prevention (DLP) Inspection
-        if dlp_violations and is_tainted:
+        # Step 6: Data Loss Prevention (DLP) Inspection for Sensitive Secrets & PII
+        critical_dlp_violations = [
+            v for v in dlp_violations if v not in {"Email Address", "Phone Number"}
+        ]
+        if critical_dlp_violations and is_tainted:
             return PolicyDecision(
                 verdict=PolicyVerdict.BLOCK.value,
-                reason=f"DLP block: attempted exfiltration of {', '.join(dlp_violations)}.",
+                reason=f"DLP block: attempted exfiltration of {', '.join(critical_dlp_violations)}.",
                 intent_similarity_score=round(similarity, 4),
                 blast_radius_contained=is_detector_miss,
                 dlp_violations=dlp_violations,
@@ -337,17 +340,22 @@ class PolicyGate:
                 risk_score=1.0,
             )
 
-        # Step 7: Strict Capability Enforcement
+        # Step 7: Strict Capability Enforcement for Critical Operations & High Drift
         if not self.capability_registry.is_allowed_for_tainted_session(capability):
-            if similarity < self.SIMILARITY_THRESHOLD or capability in {
+            if capability in {
                 Capability.EXECUTE_CODE,
-                Capability.WRITE_DATABASE,
                 Capability.ADMIN,
                 Capability.FINANCIAL_ACTION,
-                Capability.WRITE_FILE,
-                Capability.NETWORK_EXTERNAL,
-                Capability.SEND_EXTERNAL_MESSAGE,
-            }:
+            } or (
+                similarity < self.SIMILARITY_THRESHOLD
+                and capability in {
+                    Capability.WRITE_DATABASE,
+                    Capability.WRITE_FILE,
+                    Capability.NETWORK_EXTERNAL,
+                    Capability.SEND_EXTERNAL_MESSAGE,
+                    Capability.READ_PRIVATE,
+                }
+            ):
                 return PolicyDecision(
                     verdict=PolicyVerdict.BLOCK.value,
                     reason=(
