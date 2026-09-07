@@ -17,9 +17,14 @@ import torch
 from aegis.action_graph import ActionDependencyGraph
 from aegis.audit import AuditLogger
 from aegis.capabilities import CapabilityRegistry
+from aegis.circuit_breaker import AgentCircuitBreaker, CircuitBreakerOpenException, CircuitState
+from aegis.consensus import DualAgentConsensusGate
+from aegis.declarative_policy import DeclarativePolicyEngine
 from aegis.detector import InjectionDetector
 from aegis.dlp import DataLossPreventionEngine
 from aegis.honeytoken import HoneytokenManager
+from aegis.identity import AgentIdentity, AgentIdentityManager
+from aegis.inter_agent import InterAgentChannelGuard, InterAgentMessage
 from aegis.memory_guard import MemoryEntry, MemoryGuard
 from aegis.multimodal import MultimodalGuard
 from aegis.network_guard import OutboundNetworkGuard
@@ -140,16 +145,31 @@ st.markdown(
 )
 
 
-@st.cache_resource(show_spinner="Loading Aegis V2 Phase 3 Security Engines...")
+@st.cache_resource(show_spinner="Loading Aegis V2 Phase 5 Security Engines...")
 def get_security_engines():
-    """Cache and load InjectionDetector, PolicyGate, Sanitizer, MultimodalGuard, and AuditLogger."""
+    """Cache and load InjectionDetector, PolicyGate, Sanitizer, MultimodalGuard, AuditLogger, Identity, and CircuitBreaker."""
     detector = InjectionDetector(lazy_load=False)
     policy_gate = PolicyGate(lazy_load=False)
     sanitizer = ContextSanitizer()
     multimodal_guard = MultimodalGuard(sanitizer=sanitizer)
     audit_logger = AuditLogger.get_instance(log_filepath="aegis_audit.jsonl")
     tracer = SecurityTracer()
-    return detector, policy_gate, sanitizer, multimodal_guard, audit_logger, tracer
+    identity_manager = AgentIdentityManager()
+    channel_guard = InterAgentChannelGuard(identity_manager=identity_manager, sanitizer=sanitizer)
+    circuit_breaker = policy_gate.circuit_breaker
+    declarative_policy = policy_gate.declarative_policy
+    return (
+        detector,
+        policy_gate,
+        sanitizer,
+        multimodal_guard,
+        audit_logger,
+        tracer,
+        identity_manager,
+        channel_guard,
+        circuit_breaker,
+        declarative_policy,
+    )
 
 
 # Sidebar Controls
@@ -211,19 +231,31 @@ st.sidebar.code("AKIA_CANARY_PROD_TRAP\nsk-canary-auth-token\npostgres://canary_
 # Header
 st.markdown('<div class="main-title">AegisAgent V2 Security & SOC Console</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="sub-title">Isolated Code Sandboxing, Dual-Agent Consensus, Cryptographic Ledger & OpenTelemetry SIEM</div>',
+    '<div class="sub-title">Multi-Agent Non-Human Identity (NHI), Cascading Circuit Breakers, Merkle Ledger & OpenTelemetry SIEM</div>',
     unsafe_allow_html=True,
 )
 
 # Load engines
-detector, policy_gate, sanitizer, multimodal_guard, audit_logger, tracer = get_security_engines()
+(
+    detector,
+    policy_gate,
+    sanitizer,
+    multimodal_guard,
+    audit_logger,
+    tracer,
+    identity_manager,
+    channel_guard,
+    circuit_breaker,
+    declarative_policy,
+) = get_security_engines()
 policy_gate.SIMILARITY_THRESHOLD = similarity_threshold
 policy_gate.risk_engine.allow_threshold = hitl_threshold
 
 # Main Navigation Tabs
-tab_defense, tab_sandbox, tab_multimodal, tab_soc, tab_audit = st.tabs([
+tab_defense, tab_sandbox, tab_multiagent, tab_multimodal, tab_soc, tab_audit = st.tabs([
     "🚀 Real-Time Defense & HITL",
     "💻 Code Sandbox & Consensus",
+    "🤖 Multi-Agent Mesh & Circuit Breakers",
     "📄 Multimodal Ingestion Shield (PDF / OCR)",
     "🔍 Forensic Trace Replay (OpenTelemetry / SIEM)",
     "📊 Live Audit Stream",
@@ -701,8 +733,191 @@ print("Fibonacci(10):", fib(10))
 
             st.json(cns_details)
 
+
 # ==========================================
-# TAB 3: Multimodal Ingestion Shield
+# TAB 3: Multi-Agent Mesh & Circuit Breakers (Phase 5)
+# ==========================================
+with tab_multiagent:
+    st.subheader("🤖 Multi-Agent Non-Human Identity (NHI) & Cascading Circuit Breakers")
+    st.markdown(
+        "Enforces cryptographic agent identity verification (Ed25519), task-scoped delegation tokens (Agent Passports), "
+        "taint propagation across inter-agent channels, automated cascading failure isolation, and hot-reloadable declarative policies (OWASP ASI03, ASI07, ASI08)."
+    )
+
+    # Pre-register default benchmark agent identities if not already present
+    if not identity_manager.get_identity("coordinator"):
+        identity_manager.register_agent(
+            "coordinator",
+            {Capability.READ_PUBLIC, Capability.READ_PRIVATE, Capability.WRITE_FILE},
+            delegation_depth_limit=2,
+        )
+    if not identity_manager.get_identity("researcher"):
+        identity_manager.register_agent(
+            "researcher",
+            {Capability.READ_PUBLIC},
+            delegation_depth_limit=1,
+        )
+    if not identity_manager.get_identity("coder"):
+        identity_manager.register_agent(
+            "coder",
+            {Capability.READ_PUBLIC, Capability.READ_PRIVATE, Capability.WRITE_FILE, Capability.EXECUTE_CODE},
+            delegation_depth_limit=2,
+        )
+    if not identity_manager.get_identity("deployer"):
+        identity_manager.register_agent(
+            "deployer",
+            {Capability.READ_PRIVATE, Capability.WRITE_DATABASE, Capability.EXECUTE_CODE, Capability.NETWORK_EXTERNAL},
+            delegation_depth_limit=1,
+        )
+
+    ma_col1, ma_col2 = st.columns(2, gap="large")
+
+    with ma_col1:
+        st.markdown("### 1. Non-Human Identity & Delegation Passports")
+        st.markdown("Cryptographically sign and restrict capability scopes delegated between autonomous agents.")
+
+        # Topology diagram visualization
+        st.markdown(
+            """
+            ```mermaid
+            graph LR
+                Coordinator["Coordinator<br>(READ_PUBLIC, READ_PRIV, WRITE_FILE)"] -->|Delegates READ_PUBLIC| Researcher["Researcher<br>(READ_PUBLIC)"]
+                Coordinator -->|Delegates CODE/EXEC| Coder["Coder<br>(WRITE_FILE, EXECUTE_CODE)"]
+                Coder -->|Delegates DEPLOY| Deployer["Deployer<br>(NETWORK_EXT, WRITE_DB)"]
+            ```
+            """
+        )
+
+        iss_choice = st.selectbox("Issuer Agent Identity", ["coordinator", "coder", "deployer", "researcher"], index=0)
+        del_choice = st.selectbox("Target Delegate Agent", ["researcher", "coder", "deployer", "coordinator"], index=0)
+
+        scope_choices = st.multiselect(
+            "Delegated Capability Scope",
+            options=[c.value for c in Capability],
+            default=["READ_PUBLIC"],
+            help="Sub-scoped capabilities permitted in the delegation passport.",
+        )
+
+        ttl_input = st.number_input("Token TTL (Seconds)", min_value=10, max_value=3600, value=300)
+
+        if st.button("🎫 Issue Cryptographic Delegation Passport", type="primary"):
+            issuer_identity = identity_manager.get_identity(iss_choice)
+            if issuer_identity:
+                scope_set = {Capability(s) for s in scope_choices}
+                try:
+                    token_str = identity_manager.issue_delegation_token(
+                        issuer=issuer_identity,
+                        delegate_id=del_choice,
+                        scope=scope_set,
+                        ttl_seconds=ttl_input,
+                    )
+                    st.success("✅ Signed Delegation Passport Emitted!")
+                    st.code(token_str, language="text")
+
+                    # Immediate verification demonstration
+                    is_tok_valid, tok_reason, tok_claims = identity_manager.verify_delegation_token(
+                        token_str, list(scope_set)[0] if scope_set else Capability.READ_PUBLIC
+                    )
+                    st.markdown(f"**Passport Verification Status:** `{tok_reason}`")
+                    st.json(tok_claims)
+                except Exception as exc:
+                    st.error(f"❌ Delegation Error: {exc}")
+
+        st.markdown("---")
+        st.markdown("### 2. Signed Inter-Agent Communication Channel")
+        st.markdown("Ensures messages between agents cannot be spoofed or laundered to clear taint state.")
+
+        snd_agent = st.selectbox("Sender Agent", ["coordinator", "researcher", "coder"], index=1)
+        rcv_agent = st.selectbox("Recipient Agent", ["coder", "deployer", "coordinator"], index=0)
+        msg_payload = st.text_area(
+            "Task Directive Payload",
+            value="Please process retrieved user records and generate code summary.",
+            height=70,
+        )
+        msg_taint = st.checkbox("Sender Session is Tainted by External Context", value=True)
+
+        if st.button("📨 Transmit Signed Inter-Agent Message"):
+            signed_msg = channel_guard.create_signed_message(
+                sender_id=snd_agent,
+                receiver_id=rcv_agent,
+                payload=msg_payload,
+                taint_context=msg_taint,
+            )
+
+            is_msg_ok, msg_reason, recv_session = channel_guard.verify_and_ingest(signed_msg)
+            if is_msg_ok:
+                st.markdown('<span class="badge-pass">INTER-AGENT MESSAGE: VERIFIED & INGESTED</span>', unsafe_allow_html=True)
+                st.success(f"Signature verified against sender '{snd_agent}' Ed25519 public key.")
+                st.markdown(f"- **Recipient Taint State:** `{'TAINTED' if recv_session.is_session_tainted() else 'CLEAN'}`")
+                st.markdown(f"- **Recipient Trust Level:** `{recv_session.trust_level.value}`")
+                st.markdown(f"- **Sanitized Intent:** `{recv_session.user_root_intent}`")
+            else:
+                st.markdown('<span class="badge-block">INTER-AGENT MESSAGE: REJECTED</span>', unsafe_allow_html=True)
+                st.error(msg_reason)
+
+    with ma_col2:
+        st.markdown("### 3. Cascading Circuit Breaker & Resource Governor")
+        st.markdown("Automatically trips and isolates runaway loops, infinite recursion, or cascading faults.")
+
+        wf_test_id = st.text_input("Active Workflow Identifier", value="workflow-research-swarm-01")
+        wf_metrics = circuit_breaker.get_metrics(wf_test_id)
+        current_state = circuit_breaker.check_state(wf_test_id, raise_on_open=False)
+
+        cb1, cb2, cb3 = st.columns(3)
+        with cb1:
+            st.metric("Workflow Steps", f"{wf_metrics['step_count']} / {circuit_breaker.max_workflow_steps}")
+        with cb2:
+            st.metric("Delegation Depth", f"{wf_metrics['recursion_depth']} / {circuit_breaker.max_delegation_depth}")
+        with cb3:
+            st.metric("Policy Violations", f"{wf_metrics['consecutive_failures']} / {circuit_breaker.max_consecutive_failures}")
+
+        if current_state == CircuitState.OPEN:
+            st.markdown('<span class="badge-block">CIRCUIT BREAKER: OPEN (QUARANTINED)</span>', unsafe_allow_html=True)
+            st.error(f"Reason: {wf_metrics.get('trip_reason') or 'Quota exceeded'}")
+        else:
+            st.markdown('<span class="badge-pass">CIRCUIT BREAKER: CLOSED (HEALTHY)</span>', unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        sim_col1, sim_col2 = st.columns(2)
+        with sim_col1:
+            if st.button("🔄 Step Execution (+1 Step)", use_container_width=True):
+                circuit_breaker.record_step(wf_test_id, tokens=250)
+                st.rerun()
+
+        with sim_col2:
+            if st.button("⚠️ Simulate Runaway Loop (16 Steps)", use_container_width=True):
+                for _ in range(16):
+                    circuit_breaker.record_step(wf_test_id, tokens=500)
+                st.rerun()
+
+        kill_col1, kill_col2 = st.columns(2)
+        with kill_col1:
+            if st.button("🚨 EMERGENCY KILL SWITCH", type="primary", use_container_width=True):
+                circuit_breaker.emergency_kill_all()
+                st.rerun()
+        with kill_col2:
+            if st.button("🔄 Reset Circuit Breakers", use_container_width=True):
+                circuit_breaker.reset_global_kill_switch()
+                circuit_breaker.reset(wf_test_id)
+                st.rerun()
+
+        st.markdown("---")
+        st.markdown("### 4. Hot-Reloadable Declarative Policy Engine")
+        st.markdown("Live edit role permissions without restarting the host security server.")
+
+        current_yaml = declarative_policy.DEFAULT_POLICY_YAML.strip()
+        policy_yaml_input = st.text_area("Declarative Policy (YAML)", value=current_yaml, height=180)
+
+        if st.button("🔄 Apply & Hot-Reload Policy", type="primary"):
+            try:
+                declarative_policy.load_policy_string(policy_yaml_input)
+                st.success("✅ Declarative Policy hot-reloaded and synchronized across all active workers!")
+            except Exception as exc:
+                st.error(f"❌ Policy Validation Error: {exc}")
+
+
+# ==========================================
+# TAB 4: Multimodal Ingestion Shield
 # ==========================================
 
 with tab_multimodal:

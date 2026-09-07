@@ -4,11 +4,25 @@
 from aegis.action_graph import ActionDependencyGraph, ActionNode
 from aegis.audit import AuditLogger
 from aegis.capabilities import CapabilityRegistry
+from aegis.circuit_breaker import (
+    AgentCircuitBreaker,
+    CircuitBreakerOpenException,
+    CircuitState,
+)
 from aegis.consensus import DualAgentConsensusGate
+from aegis.declarative_policy import (
+    DeclarativePolicyEngine,
+    DeclarativePolicySchema,
+    GlobalPolicyConfig,
+    NetworkPolicyConfig,
+    RolePolicyConfig,
+)
 from aegis.detector import AegisDetector, InjectionDetector
 from aegis.dlp import DataLossPreventionEngine
 from aegis.gateway import create_gateway_app
 from aegis.honeytoken import HoneytokenManager
+from aegis.identity import AgentIdentity, AgentIdentityManager
+from aegis.inter_agent import InterAgentChannelGuard, InterAgentMessage
 from aegis.ledger import CryptographicLedger
 from aegis.memory_guard import MemoryEntry, MemoryGuard
 from aegis.middleware import AegisToolWrapper, aegis_guard
@@ -70,5 +84,17 @@ __all__ = [
     "create_gateway_app",
     "aegis_guard",
     "AegisToolWrapper",
+    "AgentIdentity",
+    "AgentIdentityManager",
+    "InterAgentMessage",
+    "InterAgentChannelGuard",
+    "CircuitState",
+    "CircuitBreakerOpenException",
+    "AgentCircuitBreaker",
+    "RolePolicyConfig",
+    "NetworkPolicyConfig",
+    "GlobalPolicyConfig",
+    "DeclarativePolicySchema",
+    "DeclarativePolicyEngine",
 ]
 

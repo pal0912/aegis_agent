@@ -16,10 +16,12 @@ class SessionContext:
 
     def __init__(
         self,
-        user_root_intent: str,
+        user_root_intent: Optional[str] = None,
         session_id: Optional[str] = None,
         is_tainted: bool = False,
-        trust_level: TrustLevel = TrustLevel.TRUSTED,
+        trust_level: Any = TrustLevel.TRUSTED,
+        root_intent: Optional[str] = None,
+        role: Optional[str] = None,
     ) -> None:
         """Initialize new agent session context with root verified intent.
 
@@ -28,17 +30,31 @@ class SessionContext:
             session_id: Optional unique session identifier; generates UUID4 if None.
             is_tainted: Initial taint state.
             trust_level: Initial trust level classification.
+            root_intent: Backward-compatible alias for user_root_intent.
+            role: Optional assigned agent role for declarative policy enforcement.
         """
+        intent = user_root_intent if user_root_intent is not None else (root_intent or "")
         self.session_id: str = session_id or str(uuid.uuid4())
-        self.user_root_intent: str = user_root_intent
+        self.user_root_intent: str = intent
         self.is_tainted: bool = is_tainted
-        self.trust_level: TrustLevel = trust_level
+        self.role: Optional[str] = role
+
+        if isinstance(trust_level, TrustLevel):
+            self.trust_level = trust_level
+        elif isinstance(trust_level, str):
+            try:
+                self.trust_level = TrustLevel(trust_level.upper())
+            except ValueError:
+                self.trust_level = TrustLevel.TRUSTED if not is_tainted else TrustLevel.UNTRUSTED
+        else:
+            self.trust_level = TrustLevel.TRUSTED if not is_tainted else TrustLevel.UNTRUSTED
+
         self.provenance_history: List[Dict[str, Any]] = [
             {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "event": "SESSION_INITIALIZED",
                 "source": "USER_DIRECT",
-                "content_sha256": AuditEvent.hash_payload(user_root_intent),
+                "content_sha256": AuditEvent.hash_payload(intent),
                 "trust_level": self.trust_level.value,
             }
         ]

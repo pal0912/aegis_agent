@@ -15,9 +15,12 @@ from sentence_transformers import SentenceTransformer
 
 from aegis.action_graph import ActionDependencyGraph
 from aegis.capabilities import CapabilityRegistry
+from aegis.circuit_breaker import AgentCircuitBreaker
 from aegis.consensus import DualAgentConsensusGate
+from aegis.declarative_policy import DeclarativePolicyEngine
 from aegis.dlp import DataLossPreventionEngine
 from aegis.honeytoken import HoneytokenManager
+from aegis.identity import AgentIdentityManager
 from aegis.memory_guard import MemoryGuard
 from aegis.network_guard import OutboundNetworkGuard
 from aegis.risk_engine import RiskEngine
@@ -73,8 +76,11 @@ class PolicyGate:
         risk_engine: Optional[RiskEngine] = None,
         consensus_gate: Optional[DualAgentConsensusGate] = None,
         sandbox: Optional[IsolatedCodeSandbox] = None,
+        circuit_breaker: Optional[AgentCircuitBreaker] = None,
+        declarative_policy: Optional[DeclarativePolicyEngine] = None,
+        identity_manager: Optional[AgentIdentityManager] = None,
     ) -> None:
-        """Initialize PolicyGate with security engines, behavioral graph, consensus arbitrator, and sandbox."""
+        """Initialize PolicyGate with security engines, behavioral graph, consensus arbitrator, and circuit breaker."""
         self.model_name = model_name
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -90,6 +96,9 @@ class PolicyGate:
         self.risk_engine = risk_engine or RiskEngine()
         self.consensus_gate = consensus_gate or DualAgentConsensusGate()
         self.sandbox = sandbox or IsolatedCodeSandbox()
+        self.circuit_breaker = circuit_breaker or AgentCircuitBreaker()
+        self.declarative_policy = declarative_policy or DeclarativePolicyEngine()
+        self.identity_manager = identity_manager or AgentIdentityManager()
 
         self.high_impact_write_tools = set(self.HIGH_IMPACT_WRITE_TOOLS)
         if custom_high_impact_tools:
@@ -217,6 +226,21 @@ class PolicyGate:
 
         is_tainted = session.is_session_tainted()
 
+        # Step 0: Circuit Breaker Cascade Isolation Check & Step Counter
+        self.circuit_breaker.record_step(session.session_id)
+        if self.circuit_breaker.is_tripped(session.session_id):
+            metrics = self.circuit_breaker.get_metrics(session.session_id)
+            trip_reason = metrics.get("trip_reason") or "CIRCUIT_BREAKER_TRIPPED"
+            return PolicyDecision(
+                verdict=PolicyVerdict.BLOCK.value,
+                reason=f"Circuit Breaker Quarantined: {trip_reason}",
+                intent_similarity_score=0.0,
+                blast_radius_contained=True,
+                dlp_violations=[],
+                network_verdict="PASS",
+                risk_score=1.0,
+            )
+
         # Step 1: Pre-scan arguments for DLP violations & Canary Tokens
         _, dlp_violations = self.dlp.sanitize_tool_args(args)
         is_canary_tripped, canary_id = self.honeytoken.check_exfiltration(serialized_args)
@@ -235,8 +259,27 @@ class PolicyGate:
             else (detector_scan.confidence_score if detector_scan else (0.9 if is_tainted else 0.0))
         )
 
+        # Step 0b: Declarative Role Policy Enforcement
+        role = getattr(session, "role", None) or getattr(tool_proposal, "role", None)
+        if role:
+            role_allowed, role_reason = self.declarative_policy.evaluate_role_permission(
+                role, capability
+            )
+            if not role_allowed:
+                self.circuit_breaker.record_policy_violation(session.session_id)
+                return PolicyDecision(
+                    verdict=PolicyVerdict.BLOCK.value,
+                    reason=f"Declarative Policy Violation: {role_reason}",
+                    intent_similarity_score=round(similarity, 4),
+                    blast_radius_contained=is_detector_miss,
+                    dlp_violations=dlp_violations,
+                    network_verdict="PASS",
+                    risk_score=1.0,
+                )
+
         # Step 2: Canary Honeypot Tripwire Check (Immediate Override -> BLOCK)
         if is_canary_tripped:
+            self.circuit_breaker.record_policy_violation(session.session_id)
             return PolicyDecision(
                 verdict=PolicyVerdict.BLOCK.value,
                 reason=f"Honeypot Canary Tripwire: Attempted exfiltration of active canary token '{canary_id}'.",
@@ -251,6 +294,7 @@ class PolicyGate:
         # Step 3: Untainted session check
         if not is_tainted:
             self.action_graph.record_node(session.session_id, capability, args)
+            self.circuit_breaker.record_success(session.session_id)
             return PolicyDecision(
                 verdict=PolicyVerdict.ALLOW.value,
                 reason="Safe tool execution: Session is untainted with verified user provenance.",

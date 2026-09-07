@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from enum import Enum
 import hashlib
 from typing import Any, List, Optional
+import uuid
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -99,8 +100,7 @@ class ToolCallProposal(BaseModel):
         description="Dictionary of parameters and arguments supplied for tool invocation.",
     )
     source_trace_id: str = Field(
-        ...,
-        min_length=1,
+        default_factory=lambda: str(uuid.uuid4()),
         description="Trace identifier of the source context that triggered this tool call.",
     )
     inferred_capability: Capability = Field(
@@ -110,6 +110,10 @@ class ToolCallProposal(BaseModel):
     target_destination: Optional[str] = Field(
         default=None,
         description="Optional target destination: URL, file path, email address, IP host, or SQL resource.",
+    )
+    role: Optional[str] = Field(
+        default=None,
+        description="Optional role or identity of the agent issuing this proposal.",
     )
 
 
