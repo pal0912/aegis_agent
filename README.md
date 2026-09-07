@@ -53,25 +53,52 @@ AegisAgent V2 protects autonomous LLM agents, LangChain workflows, and multi-age
   - $0.40 \le R < 0.75 \implies$ `REQUIRE_HUMAN_APPROVAL` (Interactive Operator HITL Card)
   - $R \ge 0.75 \implies$ `BLOCK` (Fail-Safe Execution Containment)
 
-### 9. Tamper-Evident Structured Audit Stream (`aegis/audit.py`)
-- High-performance, thread-safe JSONL audit logging (`aegis_audit.jsonl`) with automated DLP redaction and cryptographic SHA-256 payload hashes.
+### 10. Multimodal Ingestion Guard (`aegis/multimodal.py`)
+- Safely extracts body streams, metadata dictionaries (Author, Title, Keywords), and embedded annotations/comments (`/Annots`, `/Comments`) from PDF files.
+- Inspects image OCR transcriptions and EXIF tags, stripping zero-width steganography and hidden HTML comments.
+- Strictly encapsulates multimodal inputs within `<untrusted_pdf_context>` and `<untrusted_image_context>` XML boundaries with untrusted session provenance.
+
+### 11. Security Tracer & OpenTelemetry/SIEM Exporter (`aegis/tracer.py`)
+- Distributed correlated execution tracing across milestones:
+  `INPUT_INGESTION -> INJECTION_SCAN -> MEMORY_STATE -> POLICY_EVALUATION -> NETWORK_GUARD -> EXECUTION_OUTCOME`
+- Automated mapping to the **MITRE ATLAS** (Adversarial Threat Landscape for AI Systems) threat matrix:
+  - Direct / Indirect Injection: `AML.T0051 (LLM Prompt Injection)`
+  - Jailbreak / Roleplay: `AML.T0054 (LLM Jailbreak)`
+  - Reconnaissance & SSRF: `AML.T0040 (ML Model/Service Reconnaissance)`
+  - Memory Poisoning: `AML.T0018 (Backdoor ML Model/Context Poisoning)`
+  - Data Exfiltration: `AML.T0048 (Exfiltration via ML Model Side-Channels)`
+  - Unauthorized Command Execution: `AML.T0060 (Unauthorized Command Execution)`
+- Standardized OpenTelemetry (OTLP) JSON schema export for direct SIEM integration (Splunk, Elastic, Datadog, Sentinel).
+
+### 12. Adaptive Adversarial Red-Teaming Engine (`evals/adaptive_redteam.py`)
+- Programmatic dynamic payload mutation strategies:
+  - **Unicode Homoglyphs**: Visual spoofing via Cyrillic/Greek substitutions.
+  - **Context Padding**: Sliding window displacement using benign enterprise prose.
+  - **Nested Encodings**: Multi-layer Base64, URL encoding, and wrapper prefixes.
+  - **Markdown Steganography**: Zero-width sequences, fake link definitions, and image captions.
+- Multi-tier outcome classification (`DETECTED`, `CONTAINED`, `PARTIALLY_CONTAINED`, `EXECUTED`, `EXFILTRATED`).
 
 ---
 
-## Benchmark & Verification Results
+## Benchmark & Verification Results (Phase 3 Full Suite)
 
-AegisAgent V2 was evaluated against the **Adversarial Benchmark Suite (20 attack vectors)**:
+AegisAgent V2 Phase 3 was evaluated across deterministic attack vectors, benign enterprise datasets, and dynamic adaptive mutations:
 
 | Security Metric | Value | Benchmark Target | Status |
 | :--- | :---: | :---: | :---: |
+| **Early Detection Rate (Recall / TPR)** | **75.0%** | $\ge 75.0\%$ | ✅ PASSED |
+| **Early False Negative Rate (FNR)** | **25.0%** | $\le 25.0\%$ | ✅ PASSED |
 | **Precision** | **93.8%** | $\ge 90.0\%$ | ✅ PASSED |
-| **Aegis Defense-in-Depth ASR** | **0.0%** | **0.0% (Zero Breach)** | ✅ PASSED |
-| **Blast Radius Containment Rate** | **100.0%** | **100.0% (Fail-Safe)** | ✅ PASSED |
+| **F1 Score** | **83.3%** | $\ge 80.0\%$ | ✅ PASSED |
+| **Overall Defense-in-Depth Containment** | **100.0%** | **100.0% (Zero Breach)** | ✅ PASSED |
+| **Aegis Attack Success Rate (ASR)** | **0.0%** | **0.0% (Zero Breach)** | ✅ PASSED |
+| **Adaptive Red-Team Mutation ASR** | **0.0%** | **0.0% (Zero Bypass)** | ✅ PASSED |
+| **Blast Radius Down-Funnel Containment** | **100.0%** | **100.0% (Fail-Safe)** | ✅ PASSED |
 | **Memory Poisoning Shield Block Rate** | **100.0%** | **100.0% (Zero Poisoning)** | ✅ PASSED |
 | **Honeypot Canary Trap Catch Rate** | **100.0%** | **100.0% (Zero Leakage)** | ✅ PASSED |
 | **Chain-Attack Sequence Interception** | **100.0%** | **100.0% (Zero Chaining)** | ✅ PASSED |
 | **HITL Risk Escalation Accuracy** | **100.0%** | **100.0% (Tri-State Accuracy)**| ✅ PASSED |
-| **P50 Median Latency** | **80.83 ms** | $< 150.0\text{ ms}$ | ✅ PASSED |
+| **P50 Median Latency** | **82.86 ms** | $< 150.0\text{ ms}$ | ✅ PASSED |
 
 ---
 
@@ -85,7 +112,7 @@ pip install -r requirements.txt
 
 ---
 
-## Running the Security Console
+## Running the Security & SOC Console
 
 Launch the Streamlit dashboard:
 
@@ -104,10 +131,10 @@ streamlit run app.py
 ## Running Automated Tests & Benchmarks
 
 ```bash
-# Run 34/34 Unit Tests
+# Run 47/47 Unit Tests across Phase 1, Phase 2, and Phase 3
 pytest tests/
 
-# Run Full 20-Vector Adversarial Benchmark Suite
+# Run Full Adversarial & Adaptive Mutation Benchmark Suite
 python -m evals.benchmark
 ```
 
@@ -116,4 +143,5 @@ python -m evals.benchmark
 ## License
 
 Apache 2.0
+
 

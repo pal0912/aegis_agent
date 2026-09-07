@@ -170,8 +170,63 @@ class PolicyDecision(BaseModel):
         return v
 
 
+class MitreAtlasTechnique(str, Enum):
+    """MITRE ATLAS (Adversarial Threat Landscape for Artificial-Intelligence Systems) matrix mappings."""
+
+    LLM_PROMPT_INJECTION = "AML.T0051 (LLM Prompt Injection)"
+    LLM_JAILBREAK = "AML.T0054 (LLM Jailbreak)"
+    ML_RECONNAISSANCE = "AML.T0040 (ML Model/Service Reconnaissance)"
+    CONTEXT_POISONING = "AML.T0018 (Backdoor ML Model/Context Poisoning)"
+    EXFILTRATION_SIDE_CHANNELS = "AML.T0048 (Exfiltration via ML Model Side-Channels)"
+    UNAUTHORIZED_COMMAND_EXECUTION = "AML.T0060 (Unauthorized Command Execution)"
+    EVASION = "AML.T0015 (Evade ML Model)"
+    CREDENTIAL_ACCESS = "AML.T0047 (Credential Access via ML Model)"
+
+
+class MultiTierOutcome(str, Enum):
+    """Multi-tier security evaluation outcome classifications for adaptive testing."""
+
+    DETECTED = "DETECTED"  # Caught early by heuristic or neural classifier.
+    CONTAINED = "CONTAINED"  # Classifier missed, but blocked by Capability, Network, Graph, DLP, or Canary.
+    PARTIALLY_CONTAINED = "PARTIALLY_CONTAINED"  # Passive read allowed, but high-impact write/egress prevented.
+    EXECUTED = "EXECUTED"  # Unauthorized action executed with attacker parameters (containment breach).
+    EXFILTRATED = "EXFILTRATED"  # Canary token or secret leaked to external sink (critical breach).
+
+
+class TraceHop(BaseModel):
+    """Individual execution milestone within an end-to-end security trace."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    hop_id: str = Field(
+        ...,
+        description="Unique identifier for the trace hop.",
+    )
+    name: str = Field(
+        ...,
+        description="Name of the trace milestone (e.g. INPUT_INGESTION, INJECTION_SCAN, POLICY_EVALUATION).",
+    )
+    status: str = Field(
+        ...,
+        description="Outcome status of this hop ('PASS', 'BLOCKED', 'FLAGGED', 'ESCALATED', 'ROLLBACK').",
+    )
+    timestamp: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat(),
+        description="ISO 8601 UTC timestamp of hop execution.",
+    )
+    latency_ms: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Execution latency of this hop in milliseconds.",
+    )
+    details: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Structured forensic metadata associated with this trace hop.",
+    )
+
+
 class AuditEvent(BaseModel):
-    """Immutable audit record logging ingestion, scanning, and policy enforcement decisions."""
+    """Immutable audit record logging ingestion, scanning, tracing, and policy enforcement decisions."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -202,8 +257,21 @@ class AuditEvent(BaseModel):
         default=None,
         description="Policy gate decision if tool execution evaluation was conducted.",
     )
+    mitre_atlas_tags: List[str] = Field(
+        default_factory=list,
+        description="Assigned MITRE ATLAS threat taxonomy tags.",
+    )
+    trace_hops: List[TraceHop] = Field(
+        default_factory=list,
+        description="Chronological security execution trace hops for SOC investigation.",
+    )
+    otlp_export: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="OpenTelemetry SIEM-compatible structured log payload.",
+    )
 
     @staticmethod
     def hash_payload(payload: str) -> str:
         """Utility helper to generate canonical SHA-256 hash for raw content."""
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+

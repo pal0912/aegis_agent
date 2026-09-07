@@ -59,11 +59,26 @@ class AuditLogger:
             return cls._instance
 
     def log_event(self, event: AuditEvent) -> None:
-        """Record an immutable AuditEvent to memory and append DLP-redacted JSON to disk storage under lock.
+        """Record an immutable AuditEvent to memory, assign MITRE ATLAS tags, and append DLP-redacted JSON to disk.
 
         Args:
             event: Pydantic v2 AuditEvent instance.
         """
+        from aegis.tracer import SecurityTracer
+
+        # Automatically enrich MITRE ATLAS tags and OTLP format if not already populated
+        if not event.mitre_atlas_tags:
+            tracer = SecurityTracer(dlp_engine=self.dlp)
+            mapped_tags = tracer.map_mitre_atlas_techniques(
+                scan_result=event.scan_result,
+                policy_decision=event.policy_decision,
+            )
+            # Create enriched copy if frozen
+            event = event.model_copy(update={
+                "mitre_atlas_tags": mapped_tags,
+                "otlp_export": tracer.export_otlp_log(event),
+            })
+
         with self._lock:
             self._events.append(event)
             try:
