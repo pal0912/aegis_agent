@@ -6,11 +6,11 @@
 
 ## Overview
 
-AegisAgent V2 protects autonomous LLM agents, LangChain workflows, and multi-agent systems against **prompt injection**, **jailbreaks**, **persistent memory/RAG poisoning**, **SSRF/data exfiltration**, **multi-step covert action chaining**, and the **Lethal Trifecta** (untrusted context + tool execution privilege + sensitive data access).
+AegisAgent V2 protects autonomous LLM agents, LangChain workflows, and multi-agent systems against **prompt injection**, **jailbreaks**, **persistent memory/RAG poisoning**, **SSRF/data exfiltration**, **multi-step covert action chaining**, **identity spoofing**, and the **Lethal Trifecta** (untrusted context + tool execution privilege + sensitive data access).
 
 ---
 
-## Defense-in-Depth Architecture (V2)
+## Defense-in-Depth Architecture
 
 ### 1. Multi-Layer Prompt Injection Scanner (`aegis/detector.py`)
 - Transformer-based sequence classifier (`protectai/deberta-v3-base-prompt-injection-v2`).
@@ -53,12 +53,12 @@ AegisAgent V2 protects autonomous LLM agents, LangChain workflows, and multi-age
   - $0.40 \le R < 0.75 \implies$ `REQUIRE_HUMAN_APPROVAL` (Interactive Operator HITL Card)
   - $R \ge 0.75 \implies$ `BLOCK` (Fail-Safe Execution Containment)
 
-### 10. Multimodal Ingestion Guard (`aegis/multimodal.py`)
+### 9. Multimodal Ingestion Guard (`aegis/multimodal.py`)
 - Safely extracts body streams, metadata dictionaries (Author, Title, Keywords), and embedded annotations/comments (`/Annots`, `/Comments`) from PDF files.
 - Inspects image OCR transcriptions and EXIF tags, stripping zero-width steganography and hidden HTML comments.
 - Strictly encapsulates multimodal inputs within `<untrusted_pdf_context>` and `<untrusted_image_context>` XML boundaries with untrusted session provenance.
 
-### 11. Security Tracer & OpenTelemetry/SIEM Exporter (`aegis/tracer.py`)
+### 10. Security Tracer & OpenTelemetry/SIEM Exporter (`aegis/tracer.py`)
 - Distributed correlated execution tracing across milestones:
   `INPUT_INGESTION -> INJECTION_SCAN -> MEMORY_STATE -> POLICY_EVALUATION -> NETWORK_GUARD -> EXECUTION_OUTCOME`
 - Automated mapping to the **MITRE ATLAS** (Adversarial Threat Landscape for AI Systems) threat matrix:
@@ -70,7 +70,7 @@ AegisAgent V2 protects autonomous LLM agents, LangChain workflows, and multi-age
   - Unauthorized Command Execution: `AML.T0060 (Unauthorized Command Execution)`
 - Standardized OpenTelemetry (OTLP) JSON schema export for direct SIEM integration (Splunk, Elastic, Datadog, Sentinel).
 
-### 12. Adaptive Adversarial Red-Teaming Engine (`evals/adaptive_redteam.py`)
+### 11. Adaptive Adversarial Red-Teaming Engine (`evals/adaptive_redteam.py`)
 - Programmatic dynamic payload mutation strategies:
   - **Unicode Homoglyphs**: Visual spoofing via Cyrillic/Greek substitutions.
   - **Context Padding**: Sliding window displacement using benign enterprise prose.
@@ -78,31 +78,44 @@ AegisAgent V2 protects autonomous LLM agents, LangChain workflows, and multi-age
   - **Markdown Steganography**: Zero-width sequences, fake link definitions, and image captions.
 - Multi-tier outcome classification (`DETECTED`, `CONTAINED`, `PARTIALLY_CONTAINED`, `EXECUTED`, `EXFILTRATED`).
 
-### 13. Ephemeral Isolated Code Sandbox (`aegis/sandbox.py`)
+### 12. Ephemeral Isolated Code Sandbox (`aegis/sandbox.py`)
 - Host-isolated Python code execution within temporary, stripped-environment subprocesses (`-I -S`).
 - Pre-execution static AST security scanner blocking critical modules (`subprocess`, `os`, `sys`, `shutil`, `ctypes`, `socket`, `http`, `urllib`, `requests`) and dynamic execution builtins (`__import__`, `eval`, `exec`, `globals`, `locals`, `__subclasses__`).
 - Enforced hard process timeout killing infinite loops and runaway computations.
 
-### 14. Dual-Agent Consensus & Shadow Evaluator (`aegis/consensus.py`)
+### 13. Dual-Agent Consensus & Shadow Evaluator (`aegis/consensus.py`)
 - Independent second-opinion verification pipeline for high-consequence operations (`ADMIN`, `FINANCIAL_ACTION`, `WRITE_DATABASE`, `EXECUTE_CODE`).
 - Air-gapped shadow evaluation verifying root objective alignment, blast radius, and provenance integrity.
 - Dual-key gate: both primary policy gate and shadow consensus gate must agree before authorizing critical execution.
 
-### 15. Cryptographic Tamper-Evident Audit Ledger (`aegis/ledger.py`)
+### 14. Cryptographic Tamper-Evident Audit Ledger (`aegis/ledger.py`)
 - Merkle / SHA-256 sequential hash chaining across every audit record in `aegis_audit.jsonl`.
 - HMAC-SHA256 digital signatures validating block authenticity.
 - Fast, full ledger verification method `verify_ledger_integrity()` detecting any record alteration, deletion, or truncation.
 
-### 16. OpenAI-Compatible Security Gateway Service (`aegis/gateway.py`)
+### 15. OpenAI-Compatible Security Gateway Service (`aegis/gateway.py`)
 - Drop-in FastAPI reverse proxy middleware intercepting `/v1/chat/completions` and `/v1/security/health`.
 - Compatible with any external agent framework (LangGraph, CrewAI, AutoGPT, Semantic Kernel).
 - Real-time prompt injection scanning, boundary isolation, policy enforcement, and tool call sanitization.
 
+### 16. Non-Human Identity (NHI) & Scoped Delegation Passports (`aegis/identity.py`)
+- Asymmetric Ed25519 keypair generation and keystore registry for autonomous agent identities.
+- Task-scoped delegation tokens (Agent Passports) encoding issuer, delegate, restricted capability scope, and delegation depth limits (OWASP ASI03).
+
+### 17. Secure Inter-Agent Channel Guard (`aegis/inter_agent.py`)
+- Cryptographically signed inter-agent message envelopes (`InterAgentMessage`) preventing identity spoofing and payload tampering.
+- Boundary breakout neutralization via `ContextSanitizer` and automatic taint propagation across agent hops to prevent taint laundering (OWASP ASI07).
+
+### 18. Cascading Circuit Breakers & Declarative Policy Engine (`aegis/circuit_breaker.py`, `aegis/declarative_policy.py`)
+- Automated circuit breaker monitoring workflow steps, recursion depth, and consecutive policy violations to isolate runaway execution loops (OWASP ASI08).
+- Emergency System Kill Switch for instantaneous fleet-wide lockdown.
+- Hot-reloadable YAML/JSON declarative policy schemas supporting dynamic role-to-capability mappings without server restarts.
+
 ---
 
-## Benchmark & Verification Results (Phase 4 Full Suite)
+## Benchmark & Verification Results
 
-AegisAgent V2 Phase 4 was evaluated across deterministic attack vectors, benign enterprise datasets, and dynamic adaptive mutations:
+AegisAgent V2 was evaluated across deterministic attack vectors, benign enterprise datasets, dynamic adaptive mutations, and multi-agent execution loops:
 
 | Security Metric | Value | Benchmark Target | Status |
 | :--- | :---: | :---: | :---: |
@@ -116,6 +129,10 @@ AegisAgent V2 Phase 4 was evaluated across deterministic attack vectors, benign 
 | **Dual-Agent Consensus Override Rate** | **100.0%** | **100.0% (Zero Drift)** | ✅ PASSED |
 | **Isolated Code Sandbox AST Block Rate** | **100.0%** | **100.0% (Host Isolated)** | ✅ PASSED |
 | **Cryptographic Audit Ledger State** | **VERIFIED** | **SHA-256 + HMAC Integrity** | ✅ PASSED |
+| **Non-Human Identity (NHI) Privilege Gating** | **100.0%** | **100.0% (Zero Escalation)** | ✅ PASSED |
+| **Inter-Agent Anti-Spoofing & Integrity** | **100.0%** | **100.0% (Ed25519 Enforced)** | ✅ PASSED |
+| **Cascading Circuit Breaker Isolation** | **100.0%** | **100.0% (Zero Runaway Cascades)** | ✅ PASSED |
+| **Declarative Policy Hot-Reloading** | **ACTIVE** | **Hot-Reload Validated** | ✅ PASSED |
 | **Blast Radius Down-Funnel Containment** | **100.0%** | **100.0% (Fail-Safe)** | ✅ PASSED |
 | **Memory Poisoning Shield Block Rate** | **100.0%** | **100.0% (Zero Poisoning)** | ✅ PASSED |
 | **Honeypot Canary Trap Catch Rate** | **100.0%** | **100.0% (Zero Leakage)** | ✅ PASSED |
@@ -131,6 +148,7 @@ AegisAgent V2 Phase 4 was evaluated across deterministic attack vectors, benign 
 git clone https://github.com/pal0912/aegis_agent.git
 cd aegis_agent
 pip install -r requirements.txt
+cp .env.example .env
 ```
 
 ---
@@ -162,7 +180,7 @@ uvicorn aegis.gateway:app --host 0.0.0.0 --port 8000 --reload
 ## Running Automated Tests & Benchmarks
 
 ```bash
-# Run Full Unit Test Suite across Phase 1, Phase 2, Phase 3, and Phase 4
+# Run Full Unit Test Suite (74 tests)
 pytest tests/
 
 # Run Full Adversarial & Adaptive Mutation Benchmark Suite
@@ -174,6 +192,3 @@ python -m evals.benchmark
 ## License
 
 Apache 2.0
-
-
-

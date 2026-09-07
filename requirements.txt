@@ -25,6 +25,7 @@ rich>=13.0.0
 # API Gateway & Web Services
 fastapi>=0.100.0
 uvicorn>=0.20.0
+httpx>=0.24.0
 
 # Security, Cryptography & Policy Configuration
 cryptography>=41.0.0
