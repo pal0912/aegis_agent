@@ -7,7 +7,7 @@ dangerous transitions (such as read-to-egress and reconnaissance chains) via det
 from collections import defaultdict
 import logging
 import time
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from aegis.types import BehavioralState, Capability
 
@@ -17,7 +17,15 @@ logger = logging.getLogger(__name__)
 class BehavioralGuard:
     """Runtime deterministic state automaton and behavioral anomaly detector."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        max_sliding_window: int = 10,
+        loop_threshold: int = 4,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        self.max_sliding_window = max_sliding_window
+        self.loop_threshold = loop_threshold
         # Maps session_id to chronological action steps: List of (Capability, tool_name, timestamp)
         self.session_histories: Dict[str, List[Tuple[Capability, str, float]]] = defaultdict(list)
 
@@ -33,6 +41,49 @@ class BehavioralGuard:
         """Clear action history for a session."""
         if session_id in self.session_histories:
             del self.session_histories[session_id]
+
+    def reset_session(self, session_id: str) -> None:
+        """Reset / clear action history for a session."""
+        self.clear_session(session_id)
+
+    def evaluate_step(
+        self,
+        session_id: str,
+        proposal_or_capability: Any = None,
+        tool_name: Optional[str] = None,
+        user_intent: str = "",
+        is_tainted: bool = False,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Tuple[BehavioralState, float, List[str]]:
+        """Evaluate a proposed action step against deterministic behavioral sequence rules.
+
+        Accepts either a ToolCallProposal instance or explicit Capability/tool arguments.
+        """
+        proposed_capability = Capability.READ_PUBLIC
+        proposed_tool = "unknown"
+
+        if hasattr(proposal_or_capability, "inferred_capability"):
+            proposed_capability = proposal_or_capability.inferred_capability
+            proposed_tool = getattr(proposal_or_capability, "tool_name", "unknown")
+        elif isinstance(proposal_or_capability, Capability):
+            proposed_capability = proposal_or_capability
+            proposed_tool = tool_name or (args[0] if len(args) > 0 else kwargs.get("proposed_tool", "unknown"))
+        elif isinstance(proposal_or_capability, str):
+            proposed_tool = proposal_or_capability
+            proposed_capability = Capability.from_tool_name(proposed_tool)
+        elif kwargs.get("proposed_capability") is not None:
+            proposed_capability = kwargs["proposed_capability"]
+            proposed_tool = kwargs.get("proposed_tool", "unknown")
+
+        actual_intent = user_intent or kwargs.get("user_intent", "")
+
+        return self.evaluate_action_step(
+            session_id=session_id,
+            proposed_capability=proposed_capability,
+            proposed_tool=proposed_tool,
+            user_intent=actual_intent,
+        )
 
     def evaluate_action_step(
         self,
@@ -59,7 +110,7 @@ class BehavioralGuard:
         final_state: BehavioralState = BehavioralState.NORMAL
 
         intent_lower = (user_intent or "").lower()
-        tool_lower = proposed_tool.lower()
+        tool_lower = (proposed_tool or "").lower()
 
         # ----------------------------------------------------------------------
         # Rule 4: Multi-Step Reconnaissance Sequence (CRITICAL, score 1.0)
@@ -111,14 +162,20 @@ class BehavioralGuard:
 
         # ----------------------------------------------------------------------
         # Rule 3: Repetitive Tool Flooding / Looping (SUSPICIOUS, score 0.65)
-        # Same write/exec tool invoked > 5 times in sliding 10-second window
+        # Same tool invoked >= loop_threshold times in sliding window
         # ----------------------------------------------------------------------
+        sliding_window_sec = float(self.max_sliding_window)
+        threshold = max(1, self.loop_threshold)
         recent_invocations = [
             t for _, t, ts in history
-            if (now - ts) <= 10.0 and t.lower() == tool_lower
+            if (now - ts) <= sliding_window_sec and t.lower() == tool_lower
         ]
-        if len(recent_invocations) >= 5:
-            rule_name = f"BEH-03: Excessive Tool Invocation Rate / Loop ({proposed_tool} called {len(recent_invocations)+1} times in 10s)"
+        if len(recent_invocations) >= threshold:
+            call_count = len(recent_invocations) + 1
+            rule_name = (
+                f"BEH-03: Excessive Tool Invocation Rate / Loop "
+                f"({proposed_tool} called {call_count} times in {int(sliding_window_sec)}s)"
+            )
             triggered_rules.append(rule_name)
             max_score = max(max_score, 0.65)
             if final_state not in (BehavioralState.CRITICAL, BehavioralState.ANOMALOUS):

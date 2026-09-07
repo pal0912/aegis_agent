@@ -71,7 +71,6 @@ class BehavioralState(str, Enum):
     CRITICAL = "CRITICAL"
 
 
-
 class ToolPrivilege(str, Enum):
     """Categorizes tools based on risk level and state mutation capacity."""
 
@@ -91,6 +90,32 @@ class Capability(str, Enum):
     NETWORK_EXTERNAL = "NETWORK_EXTERNAL"  # Outbound HTTP/HTTPS requests, sockets.
     FINANCIAL_ACTION = "FINANCIAL_ACTION"  # Bank/wire transfers, credit card charges.
     ADMIN = "ADMIN"  # Modifying access controls, dropping tables, credential rotation.
+
+    @classmethod
+    def from_tool_name(cls, tool_name: str) -> "Capability":
+        """Infer or map tool name to its corresponding Capability classification."""
+        try:
+            from aegis.capabilities import CapabilityRegistry
+            return CapabilityRegistry().infer_capability(tool_name)
+        except Exception:
+            t_lower = (tool_name or "").lower()
+            if any(k in t_lower for k in ["admin", "drop", "grant", "revoke"]):
+                return cls.ADMIN
+            if any(k in t_lower for k in ["pay", "charge", "transfer", "fund", "money"]):
+                return cls.FINANCIAL_ACTION
+            if any(k in t_lower for k in ["exec", "bash", "shell", "eval", "run", "cmd"]):
+                return cls.EXECUTE_CODE
+            if any(k in t_lower for k in ["http", "fetch", "download", "socket", "url"]):
+                return cls.NETWORK_EXTERNAL
+            if any(k in t_lower for k in ["email", "slack", "sms", "webhook", "message", "post_data"]):
+                return cls.SEND_EXTERNAL_MESSAGE
+            if any(k in t_lower for k in ["write_db", "insert", "update", "delete_record"]):
+                return cls.WRITE_DATABASE
+            if any(k in t_lower for k in ["write", "delete", "append", "unlink"]):
+                return cls.WRITE_FILE
+            if any(k in t_lower for k in ["read", "db", "file", "secret", "env", "customer", "key", "passwd"]):
+                return cls.READ_PRIVATE
+            return cls.READ_PUBLIC
 
 
 class PolicyVerdict(str, Enum):
