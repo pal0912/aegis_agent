@@ -29,31 +29,86 @@ class DataLineageTracker:
             canonical_str = str(value)
         return hashlib.sha256(canonical_str.encode("utf-8")).hexdigest()
 
+    def tag_field(
+        self,
+        session_or_path: Any,
+        path: Optional[str] = None,
+        value: Any = None,
+        trust: Optional[FieldTrustLevel] = None,
+        source: str = "direct",
+        trust_level: Optional[FieldTrustLevel] = None,
+        source_label: Optional[str] = None,
+        **kwargs: Any,
+    ) -> FieldProvenance:
+        """Tag a single field and optionally record it into a SessionContext."""
+        actual_trust = trust_level or trust or kwargs.get("trust_level") or kwargs.get("trust") or FieldTrustLevel.TRUSTED
+        actual_source = source_label or source or kwargs.get("source_label") or kwargs.get("source") or "direct"
+
+        if hasattr(session_or_path, "field_lineage"):
+            session = session_or_path
+            f_path = path or "root"
+            f_val = value
+        else:
+            session = None
+            f_path = str(session_or_path)
+            f_val = path
+
+        val_hash = self.compute_value_hash(f_val)
+        prov = FieldProvenance(
+            path=f_path,
+            trust=actual_trust,
+            source=actual_source,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            value_hash=val_hash,
+        )
+        if session is not None:
+            session.field_lineage[f_path] = prov
+        return prov
+
     def tag_structure(
+        self,
+        data: Any = None,
+        trust: Optional[FieldTrustLevel] = None,
+        source: str = "direct",
+        prefix: str = "",
+        session: Any = None,
+        trust_level: Optional[FieldTrustLevel] = None,
+        source_label: Optional[str] = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Recursively inspect and tag all nested fields in a data structure with provenance metadata."""
+        target_session = session or kwargs.get("session")
+
+        # If first argument passed was a session context
+        if hasattr(data, "field_lineage"):
+            target_session = data
+            data = trust if trust is not None else (args[0] if len(args) > 0 else kwargs.get("data"))
+            trust = None
+
+        actual_trust = trust_level or trust or kwargs.get("trust_level") or kwargs.get("trust") or FieldTrustLevel.UNTRUSTED
+        actual_source = source_label or source or kwargs.get("source_label") or kwargs.get("source") or "direct"
+
+        lineage_map = self._tag_recursive(data, trust=actual_trust, source=actual_source, prefix=prefix)
+
+        if target_session is not None and hasattr(target_session, "field_lineage"):
+            target_session.field_lineage.update(lineage_map)
+            return len(lineage_map)
+
+        return lineage_map
+
+    def _tag_recursive(
         self,
         data: Any,
         trust: FieldTrustLevel,
         source: str,
         prefix: str = "",
     ) -> Dict[str, FieldProvenance]:
-        """Recursively inspect and tag all nested fields in a data structure with provenance metadata.
-
-        Args:
-            data: Arbitrary data structure (dict, list, primitive, str, etc.).
-            trust: Trust level to assign (TRUSTED, UNTRUSTED, DERIVED_UNTRUSTED).
-            source: Source identifier (e.g. 'user_input', 'web_search:url', 'internal_db').
-            prefix: Current dot-delimited JSON path prefix.
-
-        Returns:
-            Dictionary mapping dot-delimited paths (e.g. 'user.profile.bio', 'items[0].id') to FieldProvenance.
-        """
         lineage_map: Dict[str, FieldProvenance] = {}
         now_ts = datetime.now(timezone.utc).isoformat()
-
         root_path = prefix if prefix else "root"
         val_hash = self.compute_value_hash(data)
 
-        # Record root structure provenance
         lineage_map[root_path] = FieldProvenance(
             path=root_path,
             trust=trust,
@@ -65,59 +120,73 @@ class DataLineageTracker:
         if isinstance(data, dict):
             for key, val in data.items():
                 child_path = f"{prefix}.{key}" if prefix else str(key)
-                child_map = self.tag_structure(val, trust=trust, source=source, prefix=child_path)
-                lineage_map.update(child_map)
-
+                lineage_map.update(self._tag_recursive(val, trust=trust, source=source, prefix=child_path))
         elif isinstance(data, (list, tuple)):
             for idx, item in enumerate(data):
                 child_path = f"{prefix}[{idx}]" if prefix else f"[{idx}]"
-                child_map = self.tag_structure(item, trust=trust, source=source, prefix=child_path)
-                lineage_map.update(child_map)
+                lineage_map.update(self._tag_recursive(item, trust=trust, source=source, prefix=child_path))
 
         return lineage_map
 
     def propagate_transform(
         self,
-        input_paths: List[str],
-        output_path: str,
-        output_value: Any,
+        input_paths: Optional[List[str]] = None,
+        output_path: str = "output",
+        output_value: Any = None,
         session_lineage: Optional[Dict[str, FieldProvenance]] = None,
         source: str = "transform",
+        session: Any = None,
+        operation_name: Optional[str] = None,
+        *args: Any,
+        **kwargs: Any,
     ) -> FieldProvenance:
         """Derive output provenance from a set of input paths under conservative taint derivation.
 
         If ANY input path has trust level UNTRUSTED or DERIVED_UNTRUSTED, the output
         is assigned DERIVED_UNTRUSTED. Otherwise, if all inputs are TRUSTED, the output is TRUSTED.
-
-        Args:
-            input_paths: List of source field paths contributing to the transform.
-            output_path: Target path for the transformed result.
-            output_value: The transformed value.
-            session_lineage: Active session field lineage dictionary.
-            source: Identifier of the transformation operation.
-
-        Returns:
-            FieldProvenance record for the output path.
         """
-        lineage = session_lineage or {}
-        has_untrusted_input = False
+        target_session = session or kwargs.get("session")
 
-        for path in input_paths:
-            prov = lineage.get(path)
+        # If first argument passed was a session context
+        if hasattr(input_paths, "field_lineage"):
+            target_session = input_paths
+            input_paths = kwargs.get("input_paths", [])
+
+        target_lineage: Dict[str, FieldProvenance] = {}
+        if target_session is not None and hasattr(target_session, "field_lineage"):
+            target_lineage = target_session.field_lineage
+        elif session_lineage is not None:
+            target_lineage = session_lineage
+        elif "session_lineage" in kwargs:
+            target_lineage = kwargs["session_lineage"]
+
+        actual_inputs = input_paths if input_paths is not None else kwargs.get("input_paths", [])
+        actual_out_path = output_path or kwargs.get("output_path") or "output"
+        actual_out_val = output_value if output_value is not None else kwargs.get("output_value")
+        actual_source = operation_name or source or kwargs.get("operation_name") or kwargs.get("source") or "transform"
+
+        has_untrusted_input = False
+        for path in actual_inputs:
+            prov = target_lineage.get(path)
             if prov is not None and prov.trust != FieldTrustLevel.TRUSTED:
                 has_untrusted_input = True
                 break
 
         out_trust = FieldTrustLevel.DERIVED_UNTRUSTED if has_untrusted_input else FieldTrustLevel.TRUSTED
-        out_hash = self.compute_value_hash(output_value)
+        out_hash = self.compute_value_hash(actual_out_val)
 
-        return FieldProvenance(
-            path=output_path,
+        prov = FieldProvenance(
+            path=actual_out_path,
             trust=out_trust,
-            source=source,
+            source=actual_source,
             timestamp=datetime.now(timezone.utc).isoformat(),
             value_hash=out_hash,
         )
+
+        if target_session is not None and hasattr(target_session, "field_lineage"):
+            target_session.field_lineage[actual_out_path] = prov
+
+        return prov
 
     def inspect_tool_arguments(
         self,

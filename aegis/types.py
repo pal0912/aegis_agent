@@ -56,6 +56,11 @@ class FieldProvenance(BaseModel):
         description="SHA-256 hash of the field value for mutation and substring tracking.",
     )
 
+    @property
+    def trust_level(self) -> FieldTrustLevel:
+        """Alias for trust field."""
+        return self.trust
+
 
 class BehavioralState(str, Enum):
     """Runtime behavioral anomaly states emitted by the behavioral guard engine."""
