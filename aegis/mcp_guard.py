@@ -17,7 +17,7 @@ from aegis.network_guard import OutboundNetworkGuard
 from aegis.policy_gate import PolicyGate
 from aegis.sanitizer import ContextSanitizer
 from aegis.taint import SessionContext
-from aegis.types import AuditEvent, Capability, MitreAtlasTechnique, PolicyDecision, PolicyVerdict, ScanResult, ToolCallProposal
+from aegis.types import AuditEvent, Capability, MitreAtlasTechnique, PolicyDecision, PolicyVerdict, ScanResult, ToolCallProposal, TrustLevel
 
 logger = logging.getLogger(__name__)
 

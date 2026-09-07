@@ -9,7 +9,7 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from aegis.dlp import DataLossPreventionEngine
 from aegis.types import AuditEvent
