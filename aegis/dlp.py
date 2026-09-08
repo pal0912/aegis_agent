@@ -37,6 +37,16 @@ class DataLossPreventionEngine:
         ("OpenAI API Key", re.compile(r"\bsk-[a-zA-Z0-9_-]{32,}\b")),
         ("Anthropic API Key", re.compile(r"\bsk-ant-[a-zA-Z0-9_-]{32,}\b")),
         ("AWS Access Key ID", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+        ("Google Cloud API Key", re.compile(r"\bAIza[0-9A-Za-z\-_]{35}\b")),
+        ("Slack Token", re.compile(r"\bxox[baprs]-[0-9a-zA-Z-]{10,}\b")),
+        ("Stripe Live Secret Key", re.compile(r"\b(?:sk|rk)_live_[0-9a-zA-Z]{24,}\b")),
+        (
+            "Database Credentials URI",
+            re.compile(
+                r"\b(?:postgres|postgresql|mysql|mongodb|redis|amqp)://[^:\s]+:([^\s@]+)@[^\s]+\b",
+                re.IGNORECASE,
+            ),
+        ),
         (
             "Private Key Block",
             re.compile(

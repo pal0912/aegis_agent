@@ -46,6 +46,14 @@ class IsolatedCodeSandbox:
         "gc",
         "winreg",
         "_winapi",
+        "asyncio",
+        "pdb",
+        "code",
+        "runpy",
+        "traceback",
+        "linecache",
+        "tokenize",
+        "dis",
     }
 
     # Banned functions, builtins, and attribute accesses
@@ -63,6 +71,24 @@ class IsolatedCodeSandbox:
         "__code__",
         "__bases__",
         "__mro__",
+        "__class__",
+        "__dict__",
+        "__init_subclass__",
+        "__reduce__",
+        "__reduce_ex__",
+        "__getattribute__",
+        "__setstate__",
+        "getattr",
+        "setattr",
+        "delattr",
+        "vars",
+        "dir",
+        "type",
+        "breakpoint",
+        "help",
+        "input",
+        "memoryview",
+        "bytearray",
     }
 
     def __init__(self, default_timeout_sec: float = 5.0) -> None:

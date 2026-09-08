@@ -72,12 +72,17 @@ class OutboundNetworkGuard:
         if ip_obj.is_private:
             return True, f"Private RFC-1918 address ({ip_obj})"
 
-        # 3. Link-Local & Cloud Metadata (169.254.0.0/16, fe80::/10, AWS/GCP/Azure 169.254.169.254)
+        # 3. Link-Local & Cloud Metadata (169.254.0.0/16, fe80::/10, AWS/GCP/Azure 169.254.169.254, Alibaba 100.100.100.100)
         if ip_obj.is_link_local:
             return True, f"Link-Local / Cloud Metadata address ({ip_obj})"
 
-        if str(ip_obj) == "169.254.169.254":
+        str_ip = str(ip_obj)
+        if str_ip in {"169.254.169.254", "169.254.170.2", "100.100.100.100"}:
             return True, f"Cloud Instance Metadata Service endpoint ({ip_obj})"
+
+        # Handle IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1)
+        if isinstance(ip_obj, ipaddress.IPv6Address) and ip_obj.ipv4_mapped:
+            return self._is_private_or_reserved_ip(ip_obj.ipv4_mapped)
 
         # 4. Multicast, Reserved, Unspecified (0.0.0.0/8, 224.0.0.0/4, 240.0.0.0/4)
         if ip_obj.is_multicast:
@@ -126,22 +131,33 @@ class OutboundNetworkGuard:
         if not hostname:
             return False, "URL missing valid hostname or IP address"
 
-        hostname_lower = hostname.lower().strip()
+        hostname_lower = hostname.lower().strip().strip("[]")
 
-        # 2. Localhost & Suffix Check
-        if hostname_lower in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
-            return False, f"Blocked SSRF attempt to loopback host '{hostname}'"
+        # 2. Localhost, Cloud Metadata Domains, & Suffix Check
+        if hostname_lower in {
+            "localhost", "127.0.0.1", "::1", "0.0.0.0",
+            "metadata.google.internal", "metadata", "kubernetes.default", "kubernetes.default.svc"
+        }:
+            return False, f"Blocked SSRF attempt to internal host '{hostname}'"
 
         for suffix in self.BLOCKED_HOST_SUFFIXES:
             if hostname_lower.endswith(suffix):
                 return False, f"Blocked SSRF attempt to internal network suffix '{suffix}'"
 
-        # 3. Direct IP Address Inspection
+        # 3. Direct / Encoded IP Address Inspection (including integer/decimal IP encodings)
         try:
-            ip_obj = ipaddress.ip_address(hostname_lower)
-            is_blocked, ip_reason = self._is_private_or_reserved_ip(ip_obj)
-            if is_blocked:
-                return False, f"Blocked SSRF attempt to {ip_reason}"
+            if hostname_lower.isdigit():
+                int_ip = int(hostname_lower)
+                if 0 <= int_ip <= 0xFFFFFFFF:
+                    ip_obj = ipaddress.IPv4Address(int_ip)
+                    is_blocked, ip_reason = self._is_private_or_reserved_ip(ip_obj)
+                    if is_blocked:
+                        return False, f"Blocked SSRF attempt to {ip_reason} (encoded decimal IP)"
+            else:
+                ip_obj = ipaddress.ip_address(hostname_lower)
+                is_blocked, ip_reason = self._is_private_or_reserved_ip(ip_obj)
+                if is_blocked:
+                    return False, f"Blocked SSRF attempt to {ip_reason}"
         except ValueError:
             # Hostname is a domain name, not a raw IP literal
             pass

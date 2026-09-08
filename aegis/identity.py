@@ -8,6 +8,7 @@ import base64
 import json
 import logging
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Set, Tuple
 
@@ -44,9 +45,10 @@ class AgentIdentityManager:
     """Manages agent cryptographic identities, Ed25519 keystores, and delegation tokens."""
 
     def __init__(self) -> None:
-        """Initialize in-memory keystore and registry."""
+        """Initialize in-memory keystore, registry, and revocation list."""
         self._private_keys: Dict[str, ed25519.Ed25519PrivateKey] = {}
         self._identities: Dict[str, AgentIdentity] = {}
+        self._revoked_tokens: Set[str] = set()
 
     def register_agent(
         self,
@@ -139,6 +141,7 @@ class AgentIdentityManager:
 
         now = time.time()
         claims: Dict[str, Any] = {
+            "jti": uuid.uuid4().hex,
             "iss": issuer.agent_id,
             "sub": delegate_id,
             "scope": [c.value for c in scope],
@@ -153,10 +156,18 @@ class AgentIdentityManager:
 
         return f"{claims_b64}.{sig_b64}"
 
+    def revoke_token(self, jti: str) -> None:
+        """Revoke a delegation token by its unique JTI."""
+        self._revoked_tokens.add(jti)
+
+    def is_token_revoked(self, jti: str) -> bool:
+        """Check if a token JTI is in the revocation list."""
+        return jti in self._revoked_tokens
+
     def verify_delegation_token(
         self, token_str: str, required_capability: Capability
     ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
-        """Validate delegation token signature, expiration, and capability envelope."""
+        """Validate delegation token signature, expiration, revocation, and capability envelope."""
         if not token_str or "." not in token_str:
             return False, "MALFORMED_TOKEN", None
 
@@ -171,6 +182,11 @@ class AgentIdentityManager:
             claims = json.loads(claims_json)
         except Exception as exc:
             return False, f"TOKEN_DECODE_FAILED: {exc}", None
+
+        # Verify revocation status
+        jti = claims.get("jti")
+        if jti and jti in self._revoked_tokens:
+            return False, "TOKEN_REVOKED", claims
 
         issuer_id = claims.get("iss")
         if not issuer_id:

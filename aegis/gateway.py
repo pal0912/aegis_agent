@@ -95,6 +95,7 @@ def create_gateway_app(
     dlp_engine: Optional[DataLossPreventionEngine] = None,
     mcp_guard: Optional[MCPSecurityGuard] = None,
     health_monitor: Optional[SystemHealthMonitor] = None,
+    api_key: Optional[str] = None,
 ) -> FastAPI:
     """Factory creating the FastAPI OpenAI-compatible Aegis security gateway app."""
     app = FastAPI(
@@ -118,6 +119,18 @@ def create_gateway_app(
     )
     health = health_monitor or SystemHealthMonitor(ledger=audit.ledger)
     tracer = SecurityTracer(dlp_engine=dlp)
+
+    @app.middleware("http")
+    async def security_headers_middleware(request: Request, call_next):
+        """Inject enterprise defensive HTTP security headers into all gateway responses."""
+        response: Response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Content-Security-Policy"] = "default-src 'self'"
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        return response
 
     @app.get("/v1/security/health", response_model=SecurityHealthResponse)
     async def security_health():
