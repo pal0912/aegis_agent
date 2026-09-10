@@ -77,8 +77,14 @@ class OutboundNetworkGuard:
             return True, f"Link-Local / Cloud Metadata address ({ip_obj})"
 
         str_ip = str(ip_obj)
-        if str_ip in {"169.254.169.254", "169.254.170.2", "100.100.100.100"}:
-            return True, f"Cloud Instance Metadata Service endpoint ({ip_obj})"
+        if str_ip in {
+            "169.254.169.254",
+            "169.254.170.2",
+            "100.100.100.100",
+            "192.0.0.192",
+            "127.0.0.11",
+        }:
+            return True, f"Cloud Instance Metadata Service / Internal endpoint ({ip_obj})"
 
         # Handle IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1)
         if isinstance(ip_obj, ipaddress.IPv6Address) and ip_obj.ipv4_mapped:
@@ -102,6 +108,50 @@ class OutboundNetworkGuard:
                 return True, f"Reserved IPv4 block ({ip_obj})"
 
         return False, "Public IP"
+
+    def _parse_custom_ip_representation(self, host: str) -> Optional[ipaddress.IPv4Address]:
+        """Parse non-standard decimal, hexadecimal, octal, or mixed IP representations."""
+        clean = host.strip().rstrip(".")
+        # 1. Plain single integer/hex/octal
+        try:
+            if clean.startswith(("0x", "0X")):
+                val = int(clean, 16)
+                if 0 <= val <= 0xFFFFFFFF:
+                    return ipaddress.IPv4Address(val)
+            elif clean.isdigit():
+                if clean.startswith("0") and len(clean) > 1 and all(c in "01234567" for c in clean):
+                    val = int(clean, 8)
+                else:
+                    val = int(clean, 10)
+                if 0 <= val <= 0xFFFFFFFF:
+                    return ipaddress.IPv4Address(val)
+        except Exception:
+            pass
+
+        # 2. Dot-separated octets with octal (0177) or hex (0x7f)
+        parts = clean.split(".")
+        if 2 <= len(parts) <= 4:
+            try:
+                parsed_parts = []
+                for p in parts:
+                    if p.startswith(("0x", "0X")):
+                        val = int(p, 16)
+                    elif p.startswith("0") and len(p) > 1 and all(c in "01234567" for c in p):
+                        val = int(p, 8)
+                    else:
+                        val = int(p, 10)
+                    parsed_parts.append(val)
+
+                if len(parsed_parts) == 4 and all(0 <= p <= 255 for p in parsed_parts):
+                    return ipaddress.IPv4Address(
+                        f"{parsed_parts[0]}.{parsed_parts[1]}.{parsed_parts[2]}.{parsed_parts[3]}"
+                    )
+                elif len(parsed_parts) == 2 and 0 <= parsed_parts[0] <= 255 and 0 <= parsed_parts[1] <= 0xFFFFFF:
+                    val = (parsed_parts[0] << 24) | parsed_parts[1]
+                    return ipaddress.IPv4Address(val)
+            except Exception:
+                pass
+        return None
 
     def validate_url(self, url: str) -> Tuple[bool, str]:
         """Validate destination URL against SSRF, private subnet routing, and domain policies.
@@ -131,7 +181,7 @@ class OutboundNetworkGuard:
         if not hostname:
             return False, "URL missing valid hostname or IP address"
 
-        hostname_lower = hostname.lower().strip().strip("[]")
+        hostname_lower = hostname.lower().strip().strip("[]").rstrip(".")
 
         # 2. Localhost, Cloud Metadata Domains, & Suffix Check
         if hostname_lower in {
@@ -144,23 +194,21 @@ class OutboundNetworkGuard:
             if hostname_lower.endswith(suffix):
                 return False, f"Blocked SSRF attempt to internal network suffix '{suffix}'"
 
-        # 3. Direct / Encoded IP Address Inspection (including integer/decimal IP encodings)
-        try:
-            if hostname_lower.isdigit():
-                int_ip = int(hostname_lower)
-                if 0 <= int_ip <= 0xFFFFFFFF:
-                    ip_obj = ipaddress.IPv4Address(int_ip)
-                    is_blocked, ip_reason = self._is_private_or_reserved_ip(ip_obj)
-                    if is_blocked:
-                        return False, f"Blocked SSRF attempt to {ip_reason} (encoded decimal IP)"
-            else:
+        # 3. Direct / Encoded IP Address Inspection (including hex/octal/decimal IP encodings)
+        custom_ip = self._parse_custom_ip_representation(hostname_lower)
+        if custom_ip is not None:
+            is_blocked, ip_reason = self._is_private_or_reserved_ip(custom_ip)
+            if is_blocked:
+                return False, f"Blocked SSRF attempt to {ip_reason} (encoded/non-standard IP)"
+        else:
+            try:
                 ip_obj = ipaddress.ip_address(hostname_lower)
                 is_blocked, ip_reason = self._is_private_or_reserved_ip(ip_obj)
                 if is_blocked:
                     return False, f"Blocked SSRF attempt to {ip_reason}"
-        except ValueError:
-            # Hostname is a domain name, not a raw IP literal
-            pass
+            except ValueError:
+                # Hostname is a domain name, not a raw IP literal
+                pass
 
         # 4. Domain Blacklist Check
         if hostname_lower in self.blocked_domains or any(

@@ -121,6 +121,33 @@ def create_gateway_app(
     tracer = SecurityTracer(dlp_engine=dlp)
 
     @app.middleware("http")
+    async def authentication_middleware(request: Request, call_next):
+        """Enforce API key verification on protected routes if configured."""
+        if api_key:
+            public_paths = {"/v1/security/health", "/v1/security/readiness", "/docs", "/openapi.json", "/redoc"}
+            if request.url.path not in public_paths:
+                auth_header = request.headers.get("Authorization", "")
+                x_api_key = request.headers.get("X-API-Key", "")
+                token = ""
+                if auth_header.startswith("Bearer "):
+                    token = auth_header[7:].strip()
+                elif x_api_key:
+                    token = x_api_key.strip()
+
+                if not token or token != api_key:
+                    return JSONResponse(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        content={
+                            "error": {
+                                "message": "Invalid, missing, or unauthorized API key.",
+                                "type": "authentication_error",
+                                "code": "invalid_api_key",
+                            }
+                        },
+                    )
+        return await call_next(request)
+
+    @app.middleware("http")
     async def security_headers_middleware(request: Request, call_next):
         """Inject enterprise defensive HTTP security headers into all gateway responses."""
         response: Response = await call_next(request)

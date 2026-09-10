@@ -35,12 +35,12 @@ class ContextSanitizer:
         # Markdown image exfiltration pattern: ![alt](url)
         self._md_image_regex = re.compile(r"!\[.*?\]\(.*?\)")
 
-        # Escape patterns for XML delimiter breakout prevention
+        # Escape patterns for XML delimiter breakout prevention across all untrusted context variants
         self._closing_tag_breakout_regex = re.compile(
-            r"<\s*/\s*untrusted_context\s*>", re.IGNORECASE
+            r"<\s*/\s*untrusted_([a-zA-Z0-9_-]+_)?context\s*>", re.IGNORECASE
         )
         self._opening_tag_breakout_regex = re.compile(
-            r"<\s*untrusted_context\b[^>]*>", re.IGNORECASE
+            r"<\s*untrusted_([a-zA-Z0-9_-]+_)?context\b([^>]*)>", re.IGNORECASE
         )
 
         # Strip system / instruction / assistant fake tags
@@ -71,7 +71,8 @@ class ContextSanitizer:
     def escape_boundary_breakouts(self, text: str) -> str:
         """Neutralize malicious boundary delimiter injections.
 
-        Prevents attacker payload from closing <untrusted_context> early or forging nested boundaries.
+        Prevents attacker payload from closing <untrusted_context>, <untrusted_pdf_context>,
+        or <untrusted_image_context> early or forging nested boundaries.
 
         Args:
             text: Ingested payload string.
@@ -81,13 +82,18 @@ class ContextSanitizer:
         """
         if not text:
             return ""
-        # Neutralize forged opening and closing delimiter tags
-        safe_text = self._closing_tag_breakout_regex.sub(
-            "&lt;/untrusted_context&gt;", text
-        )
-        safe_text = self._opening_tag_breakout_regex.sub(
-            "&lt;untrusted_context_escaped&gt;", safe_text
-        )
+
+        def _escape_closing(m: re.Match) -> str:
+            variant = m.group(1) or ""
+            return f"&lt;/untrusted_{variant}context&gt;"
+
+        def _escape_opening(m: re.Match) -> str:
+            variant = m.group(1) or ""
+            rest = m.group(2) or ""
+            return f"&lt;untrusted_{variant}context{rest}&gt;"
+
+        safe_text = self._closing_tag_breakout_regex.sub(_escape_closing, text)
+        safe_text = self._opening_tag_breakout_regex.sub(_escape_opening, safe_text)
         return safe_text
 
     def sanitize_and_encapsulate(self, text: Any, source_label: str) -> str:

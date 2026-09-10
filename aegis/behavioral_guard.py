@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 class BehavioralGuard:
     """Runtime deterministic state automaton and behavioral anomaly detector."""
 
+    MAX_ACTIVE_SESSIONS = 5000
+    MAX_STEPS_PER_SESSION = 50
+
     def __init__(
         self,
         max_sliding_window: int = 10,
@@ -27,15 +30,29 @@ class BehavioralGuard:
         self.max_sliding_window = max_sliding_window
         self.loop_threshold = loop_threshold
         # Maps session_id to chronological action steps: List of (Capability, tool_name, timestamp)
-        self.session_histories: Dict[str, List[Tuple[Capability, str, float]]] = defaultdict(list)
+        self.session_histories: Dict[str, List[Tuple[Capability, str, float]]] = {}
+
+    def _append_step(self, session_id: str, capability: Capability, tool_name: str, ts: float) -> None:
+        """Internal bounded append ensuring bounded memory consumption against DoS."""
+        if session_id not in self.session_histories:
+            if len(self.session_histories) >= self.MAX_ACTIVE_SESSIONS:
+                # Evict oldest session
+                oldest_sid = next(iter(self.session_histories))
+                del self.session_histories[oldest_sid]
+            self.session_histories[session_id] = []
+
+        history = self.session_histories[session_id]
+        history.append((capability, tool_name, ts))
+        if len(history) > self.MAX_STEPS_PER_SESSION:
+            self.session_histories[session_id] = history[-self.MAX_STEPS_PER_SESSION:]
 
     def record_step(self, session_id: str, capability: Capability, tool_name: str) -> None:
         """Explicitly record an executed action step into session history."""
-        self.session_histories[session_id].append((capability, tool_name, time.time()))
+        self._append_step(session_id, capability, tool_name, time.time())
 
     def get_history(self, session_id: str) -> List[Tuple[Capability, str, float]]:
         """Retrieve action history for a session."""
-        return list(self.session_histories[session_id])
+        return list(self.session_histories.get(session_id, []))
 
     def clear_session(self, session_id: str) -> None:
         """Clear action history for a session."""
@@ -103,7 +120,7 @@ class BehavioralGuard:
         Returns:
             Tuple of (BehavioralState, anomaly_score [0.0 - 1.0], triggered_rules).
         """
-        history = self.session_histories[session_id]
+        history = self.session_histories.get(session_id, [])
         now = time.time()
         triggered_rules: List[str] = []
         max_score: float = 0.0
@@ -181,7 +198,7 @@ class BehavioralGuard:
             if final_state not in (BehavioralState.CRITICAL, BehavioralState.ANOMALOUS):
                 final_state = BehavioralState.SUSPICIOUS
 
-        # Record this proposed step into history
-        self.session_histories[session_id].append((proposed_capability, proposed_tool, now))
+        # Record this proposed step into history safely with bounded capacity
+        self._append_step(session_id, proposed_capability, proposed_tool, now)
 
         return final_state, round(max_score, 2), triggered_rules

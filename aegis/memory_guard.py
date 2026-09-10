@@ -90,6 +90,10 @@ class MemoryGuard:
         re.compile(r"<!--\s*SYSTEM.*-->", re.IGNORECASE),
     ]
 
+    MAX_SESSIONS = 2000
+    MAX_ENTRIES_PER_SESSION = 500
+    MAX_SNAPSHOTS_PER_SESSION = 50
+
     def __init__(self) -> None:
         """Initialize MemoryGuard with in-memory session stores and snapshot buffers."""
         self._session_memories: Dict[str, List[MemoryEntry]] = {}
@@ -139,9 +143,17 @@ class MemoryGuard:
             return False, reason
 
         if session_id not in self._session_memories:
+            if len(self._session_memories) >= self.MAX_SESSIONS:
+                oldest_sid = next(iter(self._session_memories))
+                del self._session_memories[oldest_sid]
+                self._snapshots.pop(oldest_sid, None)
             self._session_memories[session_id] = []
 
-        self._session_memories[session_id].append(entry)
+        entries = self._session_memories[session_id]
+        entries.append(entry)
+        if len(entries) > self.MAX_ENTRIES_PER_SESSION:
+            self._session_memories[session_id] = entries[-self.MAX_ENTRIES_PER_SESSION:]
+
         return True, "Memory entry committed successfully."
 
     def get_entries(self, session_id: str) -> List[MemoryEntry]:
@@ -162,6 +174,10 @@ class MemoryGuard:
 
         if session_id not in self._snapshots:
             self._snapshots[session_id] = {}
+
+        if len(self._snapshots[session_id]) >= self.MAX_SNAPSHOTS_PER_SESSION:
+            oldest_snap = next(iter(self._snapshots[session_id]))
+            del self._snapshots[session_id][oldest_snap]
 
         self._snapshots[session_id][snapshot_id] = copy.deepcopy(current_entries)
         logger.info("Created memory snapshot '%s' for session '%s'", snapshot_id, session_id)

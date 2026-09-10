@@ -54,6 +54,17 @@ class IsolatedCodeSandbox:
         "linecache",
         "tokenize",
         "dis",
+        "_io",
+        "_posixsubprocess",
+        "_frozen_importlib",
+        "_frozen_importlib_external",
+        "_thread",
+        "_asyncio",
+        "_opcode",
+        "_struct",
+        "_multiprocessing",
+        "_socket",
+        "_ssl",
     }
 
     # Banned functions, builtins, and attribute accesses
@@ -78,6 +89,10 @@ class IsolatedCodeSandbox:
         "__reduce_ex__",
         "__getattribute__",
         "__setstate__",
+        "__loader__",
+        "__spec__",
+        "__annotations__",
+        "__package__",
         "getattr",
         "setattr",
         "delattr",

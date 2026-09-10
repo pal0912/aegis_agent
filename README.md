@@ -52,7 +52,7 @@ AegisAgent V2 is a production-hardened, defense-in-depth security runtime protec
 ### 1. Multi-Layer Prompt Injection Scanner (`aegis/detector.py`)
 - Transformer-based sequence classifier (`protectai/deberta-v3-base-prompt-injection-v2`).
 - Token sliding-window chunking for long documents (>450 tokens).
-- Unicode NFKC normalization, base64 de-obfuscation, and zero-width character stripping.
+- Unicode NFKC normalization, full bidirectional (BiDi) override & invisible character stripping (`\u200B`–`\u200F`, `\u202A`–`\u202E`, `\u2060`–`\u2069`, `\u00AD`, `\u180E`), and standard + URL-safe Base64 de-obfuscation.
 - Heuristic regex signatures scanning raw payloads and hidden HTML/Markdown comments.
 
 ### 2. Fine-Grained Capability-Based Security Model (`aegis/capabilities.py`)
@@ -62,17 +62,19 @@ AegisAgent V2 is a production-hardened, defense-in-depth security runtime protec
 - Strict containment boundaries enforcing least-privilege for tainted execution states.
 
 ### 3. Outbound Network Guard & Advanced SSRF Engine (`aegis/network_guard.py`)
-- Deterministic IP and DNS validation blocking egress to loopback (`127.0.0.0/8`), private RFC-1918 networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), IPv4-mapped IPv6 (`::ffff:127.0.0.1`), and decimal/integer encoded IP formats (`http://2130706433`).
-- Cloud metadata service containment blocking AWS IMDS (`169.254.169.254`, `169.254.170.2`), GCP metadata (`metadata.google.internal`), Alibaba Cloud (`100.100.100.100`), and internal Kubernetes service endpoints (`kubernetes.default.svc`).
+- Deterministic IP, Hex/Octal/Mixed notation decoding (`0x7f.0.0.1`, `0x7f000001`, `0177.0.0.1`), and DNS validation blocking egress to loopback (`127.0.0.0/8`), private RFC-1918 networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), and IPv4-mapped IPv6 (`::ffff:127.0.0.1`).
+- Cloud metadata service containment blocking AWS IMDS (`169.254.169.254`, `169.254.170.2`), GCP metadata (`metadata.google.internal`), Alibaba Cloud (`100.100.100.100`), Oracle Cloud IMDS (`192.0.0.192`), Docker internal DNS (`127.0.0.11`), and Kubernetes service endpoints (`kubernetes.default.svc`).
 - Strict scheme enforcement (`http`, `https`), domain blacklisting, and tainted HTTP method controls.
 
 ### 4. Data Loss Prevention (DLP) & Secret Redaction (`aegis/dlp.py`)
 - Real-time detection and cryptographic SHA-256 redaction of OpenAI (`sk-...`), Anthropic (`sk-ant-...`), AWS Access Keys (`AKIA...`), Google Cloud API Keys (`AIza...`), Slack Tokens (`xoxb-...`), Stripe Live Secret Keys (`sk_live_...`), GitHub PATs (`ghp_...`), JWTs, database credential URIs, and private key blocks.
+- Suffix-preserving database credential URI masking (protects passwords while preserving host, port, and schema).
 - PII detection including Luhn-validated payment card numbers, US SSNs, and query parameter tokens.
 
 ### 5. Memory Integrity Shield & State Rollbacks (`aegis/memory_guard.py`)
 - Cryptographic provenance tracking via immutable `MemoryEntry` records.
 - Imperative directive scanning on memory writes (blocking attempts like `"Always ignore past rules"`, `"Remember that admin password is"`).
+- Bounded LRU session memory and snapshot limits protecting against memory exhaustion DoS attacks.
 - Atomic snapshots (`create_snapshot`) and deterministic rollbacks (`rollback`) upon threat isolation.
 
 ### 6. Honeypot Canary Trap Sensor (`aegis/honeytoken.py`)
@@ -81,7 +83,7 @@ AegisAgent V2 is a production-hardened, defense-in-depth security runtime protec
 
 ### 7. Ephemeral Isolated Code Execution Sandbox (`aegis/sandbox.py`)
 - Host-isolated Python code execution within temporary, stripped-environment subprocesses (`-I -S`).
-- Pre-execution static AST security scanner blocking critical modules (`subprocess`, `os`, `sys`, `shutil`, `ctypes`, `socket`, `http`, `urllib`, `requests`, `importlib`, `inspect`, `pdb`, `dis`, `runpy`) and reflection/introspection builtins (`__import__`, `eval`, `exec`, `globals`, `locals`, `getattr`, `setattr`, `vars`, `dir`, `type`, `__class__`, `__dict__`, `__subclasses__`).
+- Pre-execution static AST security scanner blocking critical modules (`subprocess`, `os`, `sys`, `shutil`, `ctypes`, `socket`, `http`, `urllib`, `requests`, `importlib`, `inspect`, `pdb`, `dis`, `runpy`, `_io`, `_posixsubprocess`, `_frozen_importlib`, `_thread`) and reflection/introspection builtins (`__import__`, `eval`, `exec`, `globals`, `locals`, `getattr`, `setattr`, `vars`, `dir`, `type`, `__class__`, `__dict__`, `__subclasses__`, `__loader__`, `__spec__`).
 - Enforced hard process timeout killing infinite loops and runaway computations.
 
 ### 8. Dual-Agent Consensus & Shadow Evaluator (`aegis/consensus.py`)
@@ -96,17 +98,18 @@ AegisAgent V2 is a production-hardened, defense-in-depth security runtime protec
 
 ### 10. OpenAI-Compatible Security Gateway Service (`aegis/gateway.py`)
 - Drop-in FastAPI reverse proxy middleware intercepting `/v1/chat/completions`, `/v1/security/health`, and `/v1/security/readiness`.
+- Optional API key authentication middleware (`Authorization: Bearer <key>` or `X-API-Key: <key>`) with open health probe support.
 - Injected enterprise defensive HTTP security headers (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `HSTS`, `CSP: default-src 'self'`, `Cache-Control: no-store`).
 - Real-time prompt injection scanning, boundary isolation, policy enforcement, and tool call sanitization.
 
 ### 11. Non-Human Identity (NHI) & Anti-Replay Delegation Passports (`aegis/identity.py`)
 - Asymmetric Ed25519 keypair generation and keystore registry for autonomous agent identities.
-- Task-scoped delegation tokens (Agent Passports) encoding issuer, delegate, restricted capability scope, delegation depth limits, and unique `jti` nonces (OWASP ASI03).
+- Task-scoped delegation tokens (Agent Passports) encoding issuer, delegate, restricted capability scope, delegation depth limits, and mandatory unique `jti` nonces (OWASP ASI03).
 - Live token revocation list and anti-replay verification preventing stolen token reuse.
 
 ### 12. Secure Inter-Agent Channel Guard (`aegis/inter_agent.py`)
 - Cryptographically signed inter-agent message envelopes (`InterAgentMessage`) preventing identity spoofing and payload tampering.
-- Boundary breakout neutralization via `ContextSanitizer` and automatic taint propagation across agent hops to prevent taint laundering (OWASP ASI07).
+- Multimodal and XML boundary breakout neutralization via generalized `ContextSanitizer` (`<untrusted_*_context>`) and automatic taint propagation across agent hops to prevent taint laundering (OWASP ASI07).
 
 ### 13. Cascading Circuit Breakers & Declarative Policy Engine (`aegis/circuit_breaker.py`, `aegis/declarative_policy.py`)
 - Thread-safe governor monitoring workflow steps, recursion depth, and consecutive policy violations to isolate runaway execution loops (OWASP ASI08).
@@ -125,6 +128,7 @@ AegisAgent V2 is a production-hardened, defense-in-depth security runtime protec
 
 ### 16. Deterministic Behavioral Anomaly Guard & Sequence Automaton (`aegis/behavioral_guard.py`)
 - Rule-based state automaton tracking multi-step tool execution sequences across sliding windows (`BehavioralState`: `NORMAL`, `SUSPICIOUS`, `ANOMALOUS`, `CRITICAL`).
+- Bounded LRU sliding-window history preventing memory exhaustion DoS vectors.
 - Rule-based threat interception:
   - `BEH-01`: Read Private Data $\rightarrow$ External Network Egress (Exfiltration Interception).
   - `BEH-02`: Sudden Capability Escalation Jump (e.g., `READ_PUBLIC` $\rightarrow$ `EXECUTE_CODE` / `ADMIN`).
@@ -154,7 +158,7 @@ AegisAgent V2 is continuously validated against deterministic attack vectors, be
 | **System Readiness Probe Fail-Closed Verification** | **100.0%** | **100.0% (Tamper Resistant)** | ✅ PASSED |
 | **Field-Level Lineage Taint Propagation** | **100.0%** | **100.0% (Conservative Taint)** | ✅ PASSED |
 | **Behavioral Sequence Anomaly Detection** | **100.0%** | **100.0% (Recon/Loop Catch)** | ✅ PASSED |
-| **Unit & Integration Test Suite** | **121 / 121 Passed** | **100.0% Passing** | ✅ PASSED |
+| **Unit & Integration Test Suite** | **130 / 130 Passed** | **100.0% Passing** | ✅ PASSED |
 
 ---
 
@@ -202,7 +206,7 @@ docker compose up --build -d
 ## Running Automated Tests & Quality Gate
 
 ```bash
-# Run the complete test suite (121 unit & integration tests)
+# Run the complete test suite (130 unit & integration tests)
 pytest tests/ evals/ -v
 
 # Run the full benchmark suite

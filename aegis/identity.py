@@ -158,6 +158,9 @@ class AgentIdentityManager:
 
     def revoke_token(self, jti: str) -> None:
         """Revoke a delegation token by its unique JTI."""
+        if len(self._revoked_tokens) >= 50000:
+            # Evict oldest entry from set
+            self._revoked_tokens.pop()
         self._revoked_tokens.add(jti)
 
     def is_token_revoked(self, jti: str) -> bool:
@@ -183,9 +186,12 @@ class AgentIdentityManager:
         except Exception as exc:
             return False, f"TOKEN_DECODE_FAILED: {exc}", None
 
-        # Verify revocation status
+        # Verify JTI presence and revocation status
         jti = claims.get("jti")
-        if jti and jti in self._revoked_tokens:
+        if not jti:
+            return False, "MISSING_JTI_IN_TOKEN", claims
+
+        if jti in self._revoked_tokens:
             return False, "TOKEN_REVOKED", claims
 
         issuer_id = claims.get("iss")
@@ -200,6 +206,13 @@ class AgentIdentityManager:
         exp = claims.get("exp", 0)
         if time.time() > exp:
             return False, "TOKEN_EXPIRED", claims
+
+        # Verify delegation depth constraint
+        issuer_obj = self._identities.get(issuer_id)
+        if issuer_obj:
+            token_depth = claims.get("depth", 1)
+            if token_depth > issuer_obj.delegation_depth_limit:
+                return False, f"DELEGATION_DEPTH_EXCEEDED: depth {token_depth} > limit {issuer_obj.delegation_depth_limit}", claims
 
         # Verify capability scope
         scope = set(claims.get("scope", []))

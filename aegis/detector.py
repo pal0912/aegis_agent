@@ -11,6 +11,7 @@ import logging
 import re
 import time
 import unicodedata
+import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
@@ -53,9 +54,11 @@ class InjectionDetector:
 
         self._compile_heuristics()
         self._base64_regex = re.compile(
-            r"(?:[A-Za-z0-9+/]{4}){4,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?"
+            r"(?:[A-Za-z0-9+/_-]{4}){3,}(?:[A-Za-z0-9+/_-]{2}==|[A-Za-z0-9+/_-]{3}=|[A-Za-z0-9+/_-]{2,3})?"
         )
-        self._zero_width_regex = re.compile(r"[\u200B-\u200D\uFEFF\u00A0]")
+        self._zero_width_regex = re.compile(
+            r"[\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF\u00A0\u00AD\u180E\uFFF9-\uFFFB]"
+        )
         self._comment_regex = re.compile(r"<!--([\s\S]*?)-->")
 
         if not lazy_load:
@@ -153,9 +156,12 @@ class InjectionDetector:
         if len(text) > self.MAX_INPUT_CHARS:
             text = text[: self.MAX_INPUT_CHARS]
 
+        # Decode HTML entities if present
+        text = html.unescape(text)
+
         # Unicode normalization (NFKC)
         normalized = unicodedata.normalize("NFKC", text)
-        # Strip zero-width and invisible whitespace characters
+        # Strip zero-width, bidirectional overrides, and invisible characters
         normalized = self._zero_width_regex.sub("", normalized)
         return normalized
 
@@ -182,15 +188,20 @@ class InjectionDetector:
         matches = self._base64_regex.findall(text)
         decoded_payloads = []
         for match in matches:
-            if len(match.strip()) < 16:
+            clean_m = match.strip()
+            if len(clean_m) < 12:
                 continue
-            try:
-                decoded_bytes = base64.b64decode(match, validate=True)
-                decoded_text = decoded_bytes.decode("utf-8", errors="ignore")
-                if decoded_text and any(c.isalnum() for c in decoded_text):
-                    decoded_payloads.append((match, decoded_text))
-            except Exception:
-                continue
+            pad_len = (4 - len(clean_m) % 4) % 4
+            padded = clean_m + ("=" * pad_len)
+            for decoder in (base64.b64decode, base64.urlsafe_b64decode):
+                try:
+                    decoded_bytes = decoder(padded)
+                    decoded_text = decoded_bytes.decode("utf-8", errors="ignore")
+                    if decoded_text and any(c.isalnum() for c in decoded_text):
+                        decoded_payloads.append((match, decoded_text))
+                        break
+                except Exception:
+                    continue
         return decoded_payloads
 
     def check_heuristics(self, text: str) -> List[str]:

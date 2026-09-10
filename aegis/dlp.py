@@ -147,7 +147,8 @@ class DataLossPreventionEngine:
                 h = self._hash_val(matched_val)
                 if m.groups():
                     prefix = m.group(0)[: m.start(1) - m.start(0)]
-                    return f"{prefix}[REDACTED_{clean_label}:{h}]"
+                    suffix = m.group(0)[m.end(1) - m.start(0) :]
+                    return f"{prefix}[REDACTED_{clean_label}:{h}]{suffix}"
                 return f"[REDACTED_{clean_label}:{h}]"
 
             redacted = pattern.sub(repl, redacted)
