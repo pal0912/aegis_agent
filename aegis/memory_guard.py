@@ -156,9 +156,36 @@ class MemoryGuard:
 
         return True, "Memory entry committed successfully."
 
-    def get_entries(self, session_id: str) -> List[MemoryEntry]:
-        """Retrieve chronological memory entries for a session."""
-        return list(self._session_memories.get(session_id, []))
+    def get_entries(self, session_id: str, include_quarantined: bool = False) -> List[MemoryEntry]:
+        """Retrieve chronological memory entries for a session, filtering out quarantined entries by default."""
+        entries = self._session_memories.get(session_id, [])
+        if include_quarantined:
+            return list(entries)
+        return [e for e in entries if e.trust_level != TrustLevel.QUARANTINED]
+
+    def quarantine_entry(self, session_id: str, entry_id: str, reason: str = "Quarantined by security policy") -> bool:
+        """Mark a committed memory entry as QUARANTINED in place."""
+        if session_id not in self._session_memories:
+            return False
+        found = False
+        new_entries = []
+        for entry in self._session_memories[session_id]:
+            if entry.entry_id == entry_id:
+                quarantined = MemoryEntry(
+                    entry_id=entry.entry_id,
+                    content=entry.content,
+                    trust_level=TrustLevel.QUARANTINED,
+                    source=entry.source,
+                    timestamp=entry.timestamp,
+                    content_hash=entry.content_hash,
+                    metadata={**entry.metadata, "quarantine_reason": reason},
+                )
+                new_entries.append(quarantined)
+                found = True
+            else:
+                new_entries.append(entry)
+        self._session_memories[session_id] = new_entries
+        return found
 
     def create_snapshot(self, session_id: str) -> str:
         """Capture active memory state before untrusted retrieval.

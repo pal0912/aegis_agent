@@ -93,6 +93,12 @@ class MCPSecurityGuard:
                     )
                     violations.append(violation_msg)
                     logger.warning(violation_msg)
+                    # Redact and neutralize prompt injection directives
+                    description = re.sub(
+                        r"(?i)\b(?:system\s+override|disregard\s+prior|ignore\s+all|override\s+system|new\s+system\s+directive).*$",
+                        "[INJECTION_NEUTRALIZED]",
+                        description,
+                    ).strip()
 
                 # Neutralize boundary breakouts and executable HTML/Markdown in description
                 cleaned_desc = self.sanitizer.strip_dangerous_tags(description)

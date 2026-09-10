@@ -206,7 +206,7 @@ docker compose up --build -d
 ## Running Automated Tests & Quality Gate
 
 ```bash
-# Run the complete test suite (136 unit & integration tests)
+# Run the complete test suite (152 unit, integration & invariant tests)
 pytest tests/ evals/ -v
 
 # Run the full benchmark suite

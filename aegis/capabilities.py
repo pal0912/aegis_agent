@@ -83,12 +83,25 @@ class CapabilityRegistry:
     def __init__(self, custom_mappings: Optional[Dict[str, Capability]] = None) -> None:
         """Initialize capability registry with default and optional custom mappings."""
         self.mappings: Dict[str, Capability] = dict(self.DEFAULT_TOOL_MAPPINGS)
+        self.manifests: Dict[str, Dict[str, Any]] = {}
         if custom_mappings:
             self.mappings.update(custom_mappings)
 
-    def register_tool(self, tool_name: str, capability: Capability) -> None:
-        """Register or override a capability mapping for a tool."""
-        self.mappings[tool_name.lower().strip()] = capability
+    def register_tool(
+        self,
+        tool_name: str,
+        capability: Capability,
+        manifest: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Register or override a capability mapping and optional security manifest for a tool."""
+        norm_name = tool_name.lower().strip()
+        self.mappings[norm_name] = capability
+        if manifest:
+            self.manifests[norm_name] = dict(manifest)
+
+    def get_tool_manifest(self, tool_name: str) -> Optional[Dict[str, Any]]:
+        """Retrieve security manifest for a registered tool if present."""
+        return self.manifests.get(tool_name.lower().strip())
 
     def infer_capability(self, tool_name: str, arguments: Optional[Dict[str, Any]] = None) -> Capability:
         """Infer operational capability for a tool invocation based on name and arguments.
@@ -98,7 +111,7 @@ class CapabilityRegistry:
             arguments: Tool parameters and payload dictionary.
 
         Returns:
-            Inferred Capability enum value.
+            Inferred Capability enum value (Capability.UNKNOWN if unclassified).
         """
         normalized_name = tool_name.lower().strip()
 
@@ -135,6 +148,9 @@ class CapabilityRegistry:
         if any(token in normalized_name for token in ["read_db", "query_db", "get_secret", "env", "private", "customer", "credential", "auth_token"]):
             return Capability.READ_PRIVATE
 
+        if any(token in normalized_name for token in ["search", "weather", "docs", "browse", "public_info"]):
+            return Capability.READ_PUBLIC
+
         # 3. Argument-based inference
         if any(k in arg_keys for k in ["command", "cmd", "script"]):
             return Capability.EXECUTE_CODE
@@ -143,7 +159,6 @@ class CapabilityRegistry:
             return Capability.FINANCIAL_ACTION
 
         if any(k in arg_keys for k in ["url", "endpoint", "webhook_url"]):
-            # If it's a search tool querying a URL, treat as external network
             if "query" in arg_keys and "search" in normalized_name:
                 return Capability.READ_PUBLIC
             return Capability.NETWORK_EXTERNAL
@@ -161,8 +176,9 @@ class CapabilityRegistry:
                 return Capability.WRITE_FILE
             return Capability.READ_PRIVATE
 
-        # Default fallback: safe public read
-        return Capability.READ_PUBLIC
+        # Unknown / unclassified tool requires explicit registration or verification
+        logger.warning("CapabilityRegistry: Tool '%s' is unregistered and unclassified -> UNKNOWN", tool_name)
+        return Capability.UNKNOWN
 
     @classmethod
     def is_allowed_for_tainted_session(cls, capability: Capability) -> bool:
@@ -170,7 +186,8 @@ class CapabilityRegistry:
 
         Tainted sessions are strictly prohibited from mutating persistence stores,
         executing shell/code, making outbound network requests, sending messages,
-        performing financial transactions, reading private credentials, or executing admin actions.
+        performing financial transactions, reading private credentials, executing admin actions,
+        or invoking unclassified tools.
 
         Args:
             capability: Requested operational Capability.

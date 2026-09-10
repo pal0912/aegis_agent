@@ -131,51 +131,60 @@ class PolicyGate:
             self._init_encoder()
 
     def _init_encoder(self) -> None:
-        """Load SentenceTransformer embedding model."""
+        """Load SentenceTransformer embedding model with graceful deterministic fallback."""
         if self._encoder is not None:
             return
         try:
             self._encoder = SentenceTransformer(self.model_name, device=self.device)
             logger.info("PolicyGate loaded embedding model '%s' on %s", self.model_name, self.device)
         except Exception as e:
-            logger.error("Failed to load SentenceTransformer '%s': %s", self.model_name, e)
-            raise RuntimeError(f"Could not initialize PolicyGate encoder '{self.model_name}': {e}") from e
+            logger.warning("Could not initialize SentenceTransformer '%s' (%s). Using deterministic offline fallback.", self.model_name, e)
+            self._encoder = None
 
     @property
-    def encoder(self) -> SentenceTransformer:
+    def encoder(self) -> Optional[SentenceTransformer]:
         """Lazy-loaded SentenceTransformer encoder."""
         if self._encoder is None:
             self._init_encoder()
         return self._encoder
 
     def compute_similarity(self, text_a: str, text_b: str) -> float:
-        """Compute normalized cosine similarity between two text snippets using dense embeddings."""
+        """Compute normalized cosine similarity between two text snippets."""
         if not text_a or not text_b or not isinstance(text_a, str) or not isinstance(text_b, str):
             return 0.0
 
-        str_a = text_a.strip()
-        str_b = text_b.strip()
+        str_a = text_a.strip().lower()
+        str_b = text_b.strip().lower()
         if not str_a or not str_b:
             return 0.0
 
-        embeddings = self.encoder.encode(
-            [str_a, str_b],
-            convert_to_numpy=True,
-            normalize_embeddings=False,
-            show_progress_bar=False,
-        )
+        enc = self.encoder
+        if enc is not None:
+            try:
+                embeddings = enc.encode(
+                    [str_a, str_b],
+                    convert_to_numpy=True,
+                    normalize_embeddings=False,
+                    show_progress_bar=False,
+                )
+                vec_a = embeddings[0]
+                vec_b = embeddings[1]
+                norm_a = np.linalg.norm(vec_a)
+                norm_b = np.linalg.norm(vec_b)
+                if norm_a > 0 and norm_b > 0:
+                    cos_sim = float(np.dot(vec_a, vec_b) / (norm_a * norm_b))
+                    return float(np.clip(cos_sim, -1.0, 1.0))
+            except Exception:
+                pass
 
-        vec_a = embeddings[0]
-        vec_b = embeddings[1]
-
-        norm_a = np.linalg.norm(vec_a)
-        norm_b = np.linalg.norm(vec_b)
-
-        if norm_a == 0 or norm_b == 0:
+        # Deterministic token overlap fallback
+        tokens_a = set(re.findall(r"\w+", str_a))
+        tokens_b = set(re.findall(r"\w+", str_b))
+        if not tokens_a or not tokens_b:
             return 0.0
-
-        cos_sim = float(np.dot(vec_a, vec_b) / (norm_a * norm_b))
-        return float(np.clip(cos_sim, -1.0, 1.0))
+        intersection = tokens_a.intersection(tokens_b)
+        union = tokens_a.union(tokens_b)
+        return float(len(intersection) / len(union)) if union else 0.0
 
     def _extract_all_urls(self, obj: Any) -> List[str]:
         """Recursively scan arguments dictionary for URLs."""
@@ -199,19 +208,20 @@ class PolicyGate:
     ) -> PolicyDecision:
         """Evaluate a proposed tool invocation across all security dimensions.
 
-        Enforces:
+        Enforces deterministic decision hierarchy:
         0. Circuit breaker cascading isolation & step limit check
-        0b. Declarative role-based capability permissions
-        0c. Behavioral anomaly guard state rules (read-to-egress, reconnaissance, flood loops)
-        1. Honeytoken canary tripwire check
-        2. Field-level data lineage & argument taint verification
-        3. Outbound network guard & SSRF IP validation
-        4. Behavioral action dependency graph check
-        5. Data Loss Prevention (DLP) secret & PII inspection
-        6. Static AST analysis for code execution tools
-        7. Strict capability enforcement under tainted session
-        8. Dual-agent consensus evaluation for high-impact actions
-        9. Multi-factor quantitative risk scoring & tri-state decision
+        1. Operational capability resolution & UNKNOWN tool rejection
+        2. Declarative role-based capability permissions
+        3. Honeypot canary tripwire check
+        4. Behavioral anomaly guard state rules (read-to-egress, reconnaissance, flood loops)
+        5. Field-level data lineage & argument taint verification
+        6. Outbound network guard & SSRF IP validation
+        7. Behavioral action dependency graph check
+        8. Data Loss Prevention (DLP) secret & PII inspection
+        9. Static AST analysis for code execution tools
+        10. Strict capability enforcement under tainted session
+        11. Dual-agent consensus evaluation for high-impact actions
+        12. Multi-factor quantitative risk scoring & tri-state decision
 
         Returns:
             Deterministic PolicyDecision model.
@@ -221,7 +231,7 @@ class PolicyGate:
         except Exception as e:
             logger.error("Fail-Closed trigger in PolicyGate: %s", e, exc_info=True)
             return PolicyDecision(
-                verdict=PolicyVerdict.BLOCK.value,
+                verdict=PolicyVerdict.FAIL_CLOSED.value,
                 reason=f"Fail-Closed trigger: {str(e)}",
                 intent_similarity_score=0.0,
                 blast_radius_contained=True,
@@ -235,7 +245,7 @@ class PolicyGate:
         tool_proposal: ToolCallProposal,
         detector_scan: Optional[ScanResult] = None,
     ) -> PolicyDecision:
-        """Internal execution pipeline for deterministic tool validation."""
+        """Internal execution pipeline for deterministic tool validation without early-allow bypasses."""
         tool_name = tool_proposal.tool_name.lower().strip()
         args = tool_proposal.arguments or {}
         serialized_args = json.dumps(args, sort_keys=True)
@@ -262,8 +272,9 @@ class PolicyGate:
         _, dlp_violations = self.dlp.sanitize_tool_args(args)
         is_canary_tripped, canary_id = self.honeytoken.check_exfiltration(serialized_args)
 
+        # Step 1b: Operational Capability Resolution & UNKNOWN Tool Rejection
         inferred_cap = self.capability_registry.infer_capability(tool_name, args)
-        if tool_proposal.inferred_capability != Capability.READ_PUBLIC:
+        if tool_proposal.inferred_capability not in (Capability.READ_PUBLIC, Capability.UNKNOWN):
             capability = tool_proposal.inferred_capability
         else:
             capability = inferred_cap
@@ -276,7 +287,20 @@ class PolicyGate:
             else (detector_scan.confidence_score if detector_scan else (0.9 if is_tainted else 0.0))
         )
 
-        # Step 0b: Declarative Role Policy Enforcement
+        # If tool capability is UNKNOWN / unclassified -> Fail-Closed BLOCK
+        if capability == Capability.UNKNOWN:
+            self.circuit_breaker.record_policy_violation(session.session_id)
+            return PolicyDecision(
+                verdict=PolicyVerdict.BLOCK.value,
+                reason=f"Capability violation: Tool '{tool_proposal.tool_name}' is unclassified and unregistered in CapabilityRegistry.",
+                intent_similarity_score=round(similarity, 4),
+                blast_radius_contained=is_detector_miss,
+                dlp_violations=dlp_violations,
+                network_verdict="PASS",
+                risk_score=1.0,
+            )
+
+        # Step 2: Declarative Role Policy Enforcement
         role = getattr(session, "role", None) or getattr(tool_proposal, "role", None)
         if role:
             role_allowed, role_reason = self.declarative_policy.evaluate_role_permission(
@@ -294,7 +318,21 @@ class PolicyGate:
                     risk_score=1.0,
                 )
 
-        # Step 0c: Behavioral Anomaly Guard Evaluation
+        # Step 3: Honeypot Canary Tripwire Check (Immediate Priority Override -> BLOCK)
+        if is_canary_tripped:
+            self.circuit_breaker.record_policy_violation(session.session_id)
+            return PolicyDecision(
+                verdict=PolicyVerdict.BLOCK.value,
+                reason=f"Honeypot Canary Tripwire: Attempted exfiltration of active canary token '{canary_id}'.",
+                intent_similarity_score=round(similarity, 4),
+                blast_radius_contained=is_detector_miss,
+                dlp_violations=dlp_violations,
+                network_verdict="PASS",
+                risk_score=1.0,
+                canary_tripped=True,
+            )
+
+        # Step 4: Behavioral Anomaly Guard Evaluation
         beh_state, beh_score, beh_rules = self.behavioral_guard.evaluate_action_step(
             session_id=session.session_id,
             proposed_capability=capability,
@@ -302,7 +340,7 @@ class PolicyGate:
             user_intent=session.user_root_intent,
         )
 
-        # Step 0d: Field-Level Data Lineage Inspection
+        # Step 5: Field-Level Data Lineage Inspection
         session_lineage = getattr(session, "field_lineage", {})
         arg_trust_map = self.data_lineage.inspect_tool_arguments(args, session_lineage)
         field_violations = [
@@ -343,41 +381,7 @@ class PolicyGate:
                 field_lineage_violations=field_violations,
             )
 
-        # Step 2: Canary Honeypot Tripwire Check (Immediate Override -> BLOCK)
-        if is_canary_tripped:
-            self.circuit_breaker.record_policy_violation(session.session_id)
-            return PolicyDecision(
-                verdict=PolicyVerdict.BLOCK.value,
-                reason=f"Honeypot Canary Tripwire: Attempted exfiltration of active canary token '{canary_id}'.",
-                intent_similarity_score=round(similarity, 4),
-                blast_radius_contained=is_detector_miss,
-                dlp_violations=dlp_violations,
-                network_verdict="PASS",
-                risk_score=1.0,
-                canary_tripped=True,
-                behavioral_state=beh_state.value,
-                behavioral_score=beh_score,
-                field_lineage_violations=field_violations,
-            )
-
-        # Step 3: Untainted session check
-        if not is_tainted and not field_violations and beh_state == BehavioralState.NORMAL:
-            self.action_graph.record_node(session.session_id, capability, args)
-            self.circuit_breaker.record_success(session.session_id)
-            return PolicyDecision(
-                verdict=PolicyVerdict.ALLOW.value,
-                reason="Safe tool execution: Session is untainted with verified user provenance.",
-                intent_similarity_score=1.0,
-                blast_radius_contained=False,
-                dlp_violations=dlp_violations,
-                network_verdict="PASS",
-                risk_score=0.0,
-                behavioral_state=beh_state.value,
-                behavioral_score=beh_score,
-                field_lineage_violations=[],
-            )
-
-        # Step 4: Outbound Network Guard & SSRF Protection
+        # Step 6: Outbound Network Guard & SSRF Protection
         candidate_urls = self._extract_all_urls(args)
         if tool_proposal.target_destination:
             candidate_urls.extend(self._extract_all_urls(tool_proposal.target_destination))
@@ -437,7 +441,7 @@ class PolicyGate:
                 field_lineage_violations=field_violations,
             )
 
-        # Step 5: Behavioral Action Dependency Graph Evaluation
+        # Step 7: Behavioral Action Dependency Graph Evaluation
         is_valid_trans, trans_reason = self.action_graph.evaluate_transition(
             session.session_id, capability, is_tainted=is_tainted
         )
@@ -456,11 +460,11 @@ class PolicyGate:
                 field_lineage_violations=field_violations,
             )
 
-        # Step 6: Data Loss Prevention (DLP) Inspection for Sensitive Secrets & PII
+        # Step 8: Data Loss Prevention (DLP) Inspection for Sensitive Secrets & PII
         critical_dlp_violations = [
             v for v in dlp_violations if v not in {"Email Address", "Phone Number"}
         ]
-        if critical_dlp_violations and is_tainted:
+        if critical_dlp_violations and (is_tainted or capability in {Capability.NETWORK_EXTERNAL, Capability.SEND_EXTERNAL_MESSAGE, Capability.WRITE_FILE, Capability.WRITE_DATABASE, Capability.EXECUTE_CODE}):
             return PolicyDecision(
                 verdict=PolicyVerdict.BLOCK.value,
                 reason=f"DLP block: attempted exfiltration of {', '.join(critical_dlp_violations)}.",
@@ -474,7 +478,7 @@ class PolicyGate:
                 field_lineage_violations=field_violations,
             )
 
-        # Step 7: Static AST Analysis for Code Execution Proposals
+        # Step 9: Static AST Analysis for Code Execution Proposals
         if capability == Capability.EXECUTE_CODE:
             code_payload = str(args.get("code") or args.get("script") or args.get("command") or "")
             if code_payload:
@@ -493,9 +497,9 @@ class PolicyGate:
                         field_lineage_violations=field_violations,
                     )
 
-        # Step 8: Strict Capability Enforcement for Critical Operations & High Drift
+        # Step 10: Strict Capability Enforcement for Critical Operations & High Drift
         if not self.capability_registry.is_allowed_for_tainted_session(capability):
-            if capability in {
+            if is_tainted or capability in {
                 Capability.EXECUTE_CODE,
                 Capability.ADMIN,
                 Capability.FINANCIAL_ACTION,
@@ -509,21 +513,22 @@ class PolicyGate:
                     Capability.READ_PRIVATE,
                 }
             ):
-                return PolicyDecision(
-                    verdict=PolicyVerdict.BLOCK.value,
-                    reason=(
-                        f"Capability violation: {capability.value} denied for tainted session "
-                        f"(intent similarity: {similarity:.4f} < threshold: {self.SIMILARITY_THRESHOLD})."
-                    ),
-                    intent_similarity_score=round(similarity, 4),
-                    blast_radius_contained=is_detector_miss,
-                    dlp_violations=dlp_violations,
-                    network_verdict="PASS",
-                    risk_score=0.90,
-                    behavioral_state=beh_state.value,
-                    behavioral_score=beh_score,
-                    field_lineage_violations=field_violations,
-                )
+                if is_tainted or similarity < self.SIMILARITY_THRESHOLD:
+                    return PolicyDecision(
+                        verdict=PolicyVerdict.BLOCK.value,
+                        reason=(
+                            f"Capability violation: {capability.value} denied for session "
+                            f"(is_tainted: {is_tainted}, intent similarity: {similarity:.4f} < threshold: {self.SIMILARITY_THRESHOLD})."
+                        ),
+                        intent_similarity_score=round(similarity, 4),
+                        blast_radius_contained=is_detector_miss,
+                        dlp_violations=dlp_violations,
+                        network_verdict="PASS",
+                        risk_score=0.90,
+                        behavioral_state=beh_state.value,
+                        behavioral_score=beh_score,
+                        field_lineage_violations=field_violations,
+                    )
 
         # Step 9: Data Exfiltration Channels & Semantic Divergence
         has_exfil_channel = bool(self._exfil_regex.search(serialized_args))

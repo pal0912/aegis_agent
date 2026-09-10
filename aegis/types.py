@@ -90,6 +90,7 @@ class Capability(str, Enum):
     NETWORK_EXTERNAL = "NETWORK_EXTERNAL"  # Outbound HTTP/HTTPS requests, sockets.
     FINANCIAL_ACTION = "FINANCIAL_ACTION"  # Bank/wire transfers, credit card charges.
     ADMIN = "ADMIN"  # Modifying access controls, dropping tables, credential rotation.
+    UNKNOWN = "UNKNOWN"  # Unregistered / unclassified tool requiring explicit registration or verification.
 
     @classmethod
     def from_tool_name(cls, tool_name: str) -> "Capability":
@@ -113,18 +114,22 @@ class Capability(str, Enum):
                 return cls.WRITE_DATABASE
             if any(k in t_lower for k in ["write", "delete", "append", "unlink"]):
                 return cls.WRITE_FILE
-            if any(k in t_lower for k in ["read", "db", "file", "secret", "env", "customer", "key", "passwd"]):
+            if any(k in t_lower for k in ["read_db", "get_secret", "env", "customer", "passwd"]):
                 return cls.READ_PRIVATE
-            return cls.READ_PUBLIC
+            if any(k in t_lower for k in ["search", "weather", "docs", "browse"]):
+                return cls.READ_PUBLIC
+            return cls.UNKNOWN
 
 
 class PolicyVerdict(str, Enum):
-    """Tri-state deterministic policy gate verdicts."""
+    """Deterministic policy gate verdicts."""
 
     ALLOW = "ALLOW"
+    ALLOW_RESTRICTED = "ALLOW_RESTRICTED"
     BLOCK = "BLOCK"
     REQUIRE_HUMAN_APPROVAL = "REQUIRE_HUMAN_APPROVAL"
     ESCALATE_TO_HUMAN = "REQUIRE_HUMAN_APPROVAL"
+    FAIL_CLOSED = "FAIL_CLOSED"
 
 
 class ScanResult(BaseModel):
