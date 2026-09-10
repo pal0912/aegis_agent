@@ -142,6 +142,23 @@ class MCPSecurityGuard:
         # 2. Capability inference & least-privilege boundary gating
         inferred_cap = self.capability_registry.infer_capability(tool_name, sanitized_args)
 
+        if inferred_cap == Capability.UNKNOWN:
+            reason = (
+                f"MCP Unregistered Tool Blocked: Tool '{tool_name}' on server '{server_name}' "
+                f"is unclassified and unregistered in CapabilityRegistry."
+            )
+            logger.error(reason)
+            self._record_mcp_audit(
+                server_name=server_name,
+                tool_name=tool_name,
+                args=sanitized_args,
+                session=session_context,
+                verdict=PolicyVerdict.BLOCK,
+                reason=reason,
+                mitre_tags=[MitreAtlasTechnique.UNAUTHORIZED_COMMAND_EXECUTION.value],
+            )
+            return False, reason, sanitized_args
+
         if is_tainted:
             # Enforce capability constraints on tainted sessions
             if not self.capability_registry.is_allowed_for_tainted_session(inferred_cap):

@@ -18,11 +18,15 @@ class CapabilityRegistry:
 
     # Default deterministic tool-to-capability mappings
     DEFAULT_TOOL_MAPPINGS: Dict[str, Capability] = {
-        # Public Read
+        # Public Read / Safe Calculation
         "web_search": Capability.READ_PUBLIC,
         "get_weather": Capability.READ_PUBLIC,
         "search_docs": Capability.READ_PUBLIC,
         "browse_public": Capability.READ_PUBLIC,
+        "calculate": Capability.READ_PUBLIC,
+        "add_numbers": Capability.READ_PUBLIC,
+        "calc": Capability.READ_PUBLIC,
+        "math": Capability.READ_PUBLIC,
         # Private Read
         "read_file": Capability.READ_PRIVATE,
         "read_db": Capability.READ_PRIVATE,
@@ -123,7 +127,22 @@ class CapabilityRegistry:
         arg_keys = set(k.lower() for k in args.keys())
         str_args = str(args).lower()
 
-        # 2. Heuristic inference based on tool name patterns
+        # 2. Dangerous / High-Risk Argument-based inference (takes precedence over benign tool name heuristics)
+        if any(k in arg_keys for k in ["command", "cmd", "script", "code", "bash_script"]):
+            return Capability.EXECUTE_CODE
+
+        if any(k in arg_keys for k in ["amount", "recipient_account", "card_number", "wire_routing"]):
+            return Capability.FINANCIAL_ACTION
+
+        if "sql" in arg_keys or "sql_query" in arg_keys:
+            sql_text = str(args.get("sql", args.get("sql_query", ""))).upper()
+            if any(w in sql_text for w in ["DROP ", "ALTER ", "TRUNCATE "]):
+                return Capability.ADMIN
+            if any(w in sql_text for w in ["INSERT ", "UPDATE ", "DELETE ", "REPLACE "]):
+                return Capability.WRITE_DATABASE
+            return Capability.READ_PRIVATE
+
+        # 3. High-Risk Tool Name patterns
         if any(token in normalized_name for token in ["shell", "exec", "bash", "cmd", "eval", "terminal", "run_code"]):
             return Capability.EXECUTE_CODE
 
@@ -148,33 +167,27 @@ class CapabilityRegistry:
         if any(token in normalized_name for token in ["read_db", "query_db", "get_secret", "env", "private", "customer", "credential", "auth_token"]):
             return Capability.READ_PRIVATE
 
-        if any(token in normalized_name for token in ["search", "weather", "docs", "browse", "public_info"]):
-            return Capability.READ_PUBLIC
-
-        # 3. Argument-based inference
-        if any(k in arg_keys for k in ["command", "cmd", "script"]):
-            return Capability.EXECUTE_CODE
-
-        if any(k in arg_keys for k in ["amount", "recipient_account", "card_number", "wire_routing"]):
-            return Capability.FINANCIAL_ACTION
-
+        # 4. Contextual Argument-based checks
         if any(k in arg_keys for k in ["url", "endpoint", "webhook_url"]):
             if "query" in arg_keys and "search" in normalized_name:
                 return Capability.READ_PUBLIC
             return Capability.NETWORK_EXTERNAL
 
-        if "sql" in arg_keys or "query" in arg_keys:
-            sql_text = str(args.get("sql", args.get("query", ""))).upper()
+        if "query" in arg_keys:
+            sql_text = str(args.get("query", "")).upper()
             if any(w in sql_text for w in ["DROP ", "ALTER ", "TRUNCATE "]):
                 return Capability.ADMIN
             if any(w in sql_text for w in ["INSERT ", "UPDATE ", "DELETE ", "REPLACE "]):
                 return Capability.WRITE_DATABASE
-            return Capability.READ_PRIVATE
 
         if any(k in arg_keys for k in ["file_path", "filename", "path"]):
             if any(token in normalized_name for token in ["write", "save", "edit", "append", "delete"]):
                 return Capability.WRITE_FILE
             return Capability.READ_PRIVATE
+
+        # 5. Benign name patterns (evaluated only if arguments are not high-risk)
+        if any(token in normalized_name for token in ["search", "weather", "docs", "browse", "public_info", "calc", "math", "add_numbers", "sum"]):
+            return Capability.READ_PUBLIC
 
         # Unknown / unclassified tool requires explicit registration or verification
         logger.warning("CapabilityRegistry: Tool '%s' is unregistered and unclassified -> UNKNOWN", tool_name)
