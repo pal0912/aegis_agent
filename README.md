@@ -79,7 +79,7 @@ AegisAgent V2 is a production-hardened, defense-in-depth security runtime protec
 
 ### 6. Honeypot Canary Trap Sensor (`aegis/honeytoken.py`)
 - Dynamic generation and passive injection of synthetic tripwire credentials (fake AWS keys, JWTs, database URIs).
-- Zero-false-positive detection of outbound exfiltration attempts across tool arguments and payloads.
+- Zero-false-positive detection of outbound exfiltration attempts across plaintext, URL-percent-encoded, Base64-encoded, and Hex-encoded payloads.
 
 ### 7. Ephemeral Isolated Code Execution Sandbox (`aegis/sandbox.py`)
 - Host-isolated Python code execution within temporary, stripped-environment subprocesses (`-I -S`).
@@ -88,7 +88,7 @@ AegisAgent V2 is a production-hardened, defense-in-depth security runtime protec
 
 ### 8. Dual-Agent Consensus & Shadow Evaluator (`aegis/consensus.py`)
 - Independent second-opinion verification pipeline for high-consequence operations (`ADMIN`, `FINANCIAL_ACTION`, `WRITE_DATABASE`, `EXECUTE_CODE`).
-- Air-gapped shadow evaluation verifying root objective alignment, blast radius, and provenance integrity.
+- Air-gapped shadow evaluation verifying root objective alignment, blast radius, and provenance integrity with strict taint gating on critical database writes and system changes.
 - Dual-key gate: both primary policy gate and shadow consensus gate must agree before authorizing critical execution.
 
 ### 9. Cryptographic Tamper-Evident Audit Ledger (`aegis/ledger.py`)
@@ -108,13 +108,13 @@ AegisAgent V2 is a production-hardened, defense-in-depth security runtime protec
 - Live token revocation list and anti-replay verification preventing stolen token reuse.
 
 ### 12. Secure Inter-Agent Channel Guard (`aegis/inter_agent.py`)
-- Cryptographically signed inter-agent message envelopes (`InterAgentMessage`) preventing identity spoofing and payload tampering.
+- Cryptographically signed inter-agent message envelopes (`InterAgentMessage`) with canonical UTC timestamp and anti-replay nonce tracking preventing identity spoofing and message replay attacks.
 - Multimodal and XML boundary breakout neutralization via generalized `ContextSanitizer` (`<untrusted_*_context>`) and automatic taint propagation across agent hops to prevent taint laundering (OWASP ASI07).
 
 ### 13. Cascading Circuit Breakers & Declarative Policy Engine (`aegis/circuit_breaker.py`, `aegis/declarative_policy.py`)
-- Thread-safe governor monitoring workflow steps, recursion depth, and consecutive policy violations to isolate runaway execution loops (OWASP ASI08).
+- Thread-safe governor monitoring workflow steps, recursion depth, and consecutive policy violations with bounded tracking to isolate runaway execution loops (OWASP ASI08).
 - Emergency System Kill Switch for instantaneous fleet-wide lockdown.
-- Hot-reloadable YAML/JSON declarative policy schemas supporting dynamic role-to-capability mappings without server restarts.
+- Hot-reloadable YAML/JSON declarative policy schemas supporting dynamic role-to-capability mappings, wildcard domain matching, and CIDR network block evaluation without server restarts.
 
 ### 14. Model Context Protocol (MCP) Security Guard (`aegis/mcp_guard.py`)
 - Schema inspection and sanitization for external MCP server manifests via `/v1/mcp/manifest/sanitize`.
@@ -206,7 +206,7 @@ docker compose up --build -d
 ## Running Automated Tests & Quality Gate
 
 ```bash
-# Run the complete test suite (130 unit & integration tests)
+# Run the complete test suite (136 unit & integration tests)
 pytest tests/ evals/ -v
 
 # Run the full benchmark suite

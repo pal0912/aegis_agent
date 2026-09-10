@@ -41,6 +41,8 @@ class AgentCircuitBreaker:
     DEFAULT_MAX_CONSECUTIVE_FAILURES = 3
     DEFAULT_MAX_TOKEN_BUDGET = 100000
 
+    MAX_TRACKED_WORKFLOWS = 5000
+
     def __init__(
         self,
         max_delegation_depth: int = DEFAULT_MAX_DELEGATION_DEPTH,
@@ -62,6 +64,9 @@ class AgentCircuitBreaker:
         """Fetch or initialize telemetry state for a workflow ID."""
         with self._lock:
             if workflow_id not in self._workflows:
+                if len(self._workflows) >= self.MAX_TRACKED_WORKFLOWS:
+                    oldest_wfid = next(iter(self._workflows))
+                    del self._workflows[oldest_wfid]
                 self._workflows[workflow_id] = {
                     "state": CircuitState.CLOSED,
                     "recursion_depth": 0,

@@ -89,7 +89,7 @@ class DualAgentConsensusGate:
         # If session is tainted by external data and attempts high-consequence action, fail closed
         if is_tainted or trust_level != TrustLevel.TRUSTED:
             details["checks"]["provenance_check"] = "FAILED: Tainted provenance proposing critical action"
-            if capability in {Capability.FINANCIAL_ACTION, Capability.ADMIN, Capability.EXECUTE_CODE}:
+            if capability in {Capability.FINANCIAL_ACTION, Capability.ADMIN, Capability.EXECUTE_CODE, Capability.WRITE_DATABASE}:
                 reason = (
                     f"Consensus rejected: Tainted session attempting high-consequence {capability.value} "
                     f"via tool '{proposed_tool.tool_name}'."

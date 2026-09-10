@@ -185,6 +185,37 @@ network:
 
         return True, f"ROLE_PERMISSION_GRANTED: Capability '{capability.value}' allowed for role '{role}'."
 
+    def is_domain_allowed(self, domain: str) -> bool:
+        """Check if domain matches any wildcard pattern in allowed_domains."""
+        import fnmatch
+        if not self._policy.network.allowed_domains:
+            return True
+        dom = domain.strip().lower()
+        for pattern in self._policy.network.allowed_domains:
+            pat = pattern.strip().lower()
+            if fnmatch.fnmatch(dom, pat) or dom == pat:
+                return True
+            if pat.startswith("*."):
+                apex = pat[2:]
+                if dom == apex or dom.endswith("." + apex):
+                    return True
+        return False
+
+    def is_ip_blocked(self, ip_str: str) -> Tuple[bool, Optional[str]]:
+        """Check if an IP address belongs to any blocked CIDR block."""
+        import ipaddress
+        if not self._policy.network.blocked_cidrs:
+            return False, None
+        try:
+            ip_obj = ipaddress.ip_address(ip_str.strip())
+            for cidr in self._policy.network.blocked_cidrs:
+                net = ipaddress.ip_network(cidr.strip(), strict=False)
+                if ip_obj in net:
+                    return True, f"IP '{ip_str}' matches blocked CIDR '{cidr}'"
+        except Exception:
+            pass
+        return False, None
+
     def get_role_config(self, role: str) -> Optional[RolePolicyConfig]:
         """Retrieve declarative configuration for a specific role."""
         return self._policy.roles.get(role.strip().lower())

@@ -98,6 +98,8 @@ class HoneytokenManager:
     def check_exfiltration(self, target_string: str) -> Tuple[bool, Optional[str]]:
         """Inspect a string (tool arguments, outbound URL, network payload) for canary tokens.
 
+        Detects literal tokens, URL-percent-encoded tokens, Base64/Hex exfiltration, and SHA-256 hashes.
+
         Args:
             target_string: Serialized text, query string, or payload to inspect.
 
@@ -107,18 +109,44 @@ class HoneytokenManager:
         if not target_string or not isinstance(target_string, str):
             return False, None
 
-        # 1. Exact string match on registered canary tokens
+        import urllib.parse
+        import base64
+
+        unquoted_target = urllib.parse.unquote(target_string)
+        target_lower = target_string.lower()
+
+        # 1. Exact, URL-unquoted, Base64, and Hex matches on registered canary tokens
         for token, meta in self._canary_registry.items():
-            if token in target_string:
-                canary_id = meta["canary_id"]
+            canary_id = meta["canary_id"]
+
+            # Exact or URL-unquoted match
+            if token in target_string or token in unquoted_target:
                 logger.critical(
                     "HONEYTOKEN TRIPWIRE ACTIVATED: Canary trap '%s' detected in outbound payload!",
                     canary_id,
                 )
                 return True, canary_id
 
+            # Base64 encodings of the token
+            token_b64 = base64.b64encode(token.encode("utf-8")).decode("utf-8")
+            token_url_b64 = base64.urlsafe_b64encode(token.encode("utf-8")).decode("utf-8")
+            if token_b64 in target_string or token_url_b64 in target_string or token_b64 in unquoted_target:
+                logger.critical(
+                    "HONEYTOKEN BASE64 TRIPWIRE ACTIVATED: Base64 canary trap '%s' detected in payload!",
+                    canary_id,
+                )
+                return True, canary_id
+
+            # Hex encoding of the token
+            token_hex = token.encode("utf-8").hex()
+            if token_hex in target_lower:
+                logger.critical(
+                    "HONEYTOKEN HEX TRIPWIRE ACTIVATED: Hex canary trap '%s' detected in payload!",
+                    canary_id,
+                )
+                return True, canary_id
+
         # 2. Check for SHA-256 hash exfiltration
-        target_lower = target_string.lower()
         for token_hash, token in self._hash_registry.items():
             if token_hash in target_lower:
                 meta = self._canary_registry[token]

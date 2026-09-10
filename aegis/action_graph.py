@@ -62,9 +62,18 @@ class ActionDependencyGraph:
 
     # Prohibited persistent history chains (if ANY node in history has X, session cannot transition to Y when tainted)
     FORBIDDEN_HISTORICAL_PAIRS: Set[Tuple[Capability, Capability]] = {
+        # Data exfiltration historical pairs
         (Capability.READ_PRIVATE, Capability.NETWORK_EXTERNAL),
         (Capability.READ_PRIVATE, Capability.SEND_EXTERNAL_MESSAGE),
+        # Dangerous escalation pairs from untrusted public ingestion
+        (Capability.READ_PUBLIC, Capability.EXECUTE_CODE),
+        (Capability.READ_PUBLIC, Capability.ADMIN),
+        (Capability.READ_PUBLIC, Capability.FINANCIAL_ACTION),
+        (Capability.READ_PUBLIC, Capability.WRITE_DATABASE),
     }
+
+    MAX_SESSIONS = 5000
+    MAX_NODES_PER_SESSION = 50
 
     def __init__(self) -> None:
         """Initialize ActionDependencyGraph with per-session execution chains."""
@@ -92,9 +101,15 @@ class ActionDependencyGraph:
             details=details or {},
         )
         if session_id not in self._graph:
+            if len(self._graph) >= self.MAX_SESSIONS:
+                oldest_sid = next(iter(self._graph))
+                del self._graph[oldest_sid]
             self._graph[session_id] = []
 
         self._graph[session_id].append(node)
+        if len(self._graph[session_id]) > self.MAX_NODES_PER_SESSION:
+            self._graph[session_id] = self._graph[session_id][-self.MAX_NODES_PER_SESSION:]
+
         logger.debug(
             "ActionGraph recorded node [%s] for session '%s' (chain length: %d)",
             capability.value,

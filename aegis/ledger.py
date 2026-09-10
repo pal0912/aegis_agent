@@ -36,11 +36,15 @@ class CryptographicLedger:
             secret_key: Secret key for HMAC-SHA256 signatures. Defaults to env var or secure fallback.
             log_filepath: Path to the JSONL log file containing chained audit entries.
         """
-        self.secret_key = (
-            secret_key
-            or os.environ.get("AEGIS_LEDGER_SECRET")
-            or "aegis_enterprise_cryptographic_master_key_v2"
-        ).encode("utf-8")
+        configured_key = secret_key or os.environ.get("AEGIS_LEDGER_SECRET")
+        if not configured_key:
+            logger.warning(
+                "SECURITY WARNING: AEGIS_LEDGER_SECRET not set. Using fallback master key for audit HMAC signatures. "
+                "Configure AEGIS_LEDGER_SECRET in production environments."
+            )
+            configured_key = "aegis_enterprise_cryptographic_master_key_v2"
+
+        self.secret_key = configured_key.encode("utf-8")
         self.log_filepath = Path(log_filepath)
         self._lock = threading.RLock()
         self._current_sequence_id: int = 0
