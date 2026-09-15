@@ -437,3 +437,68 @@ def test_mcp_guard_enforces_restricted_policy():
     )
     assert blocked_net is False
     assert "Network egress prohibited" in reason_net
+
+
+def test_real_execution_boundary_instrumented_verdicts():
+    """Verify that every verdict strictly controls underlying execution with an instrumented tool."""
+    gate = PolicyGate(lazy_load=True)
+    session = SessionContext(session_id="boundary-sess", user_root_intent="Boundary test")
+
+    verdicts_to_test = [
+        (PolicyVerdict.BLOCK.value, None, 0),
+        (PolicyVerdict.FAIL_CLOSED.value, None, 0),
+        (PolicyVerdict.REQUIRE_HUMAN_APPROVAL.value, None, 0),
+        ("UNKNOWN_ARBITRARY_VERDICT", None, 0),
+        (
+            PolicyVerdict.ALLOW_RESTRICTED.value,
+            RestrictedExecutionPolicy(
+                policy_id="ro-fs",
+                allowed_capabilities={Capability.READ_PUBLIC, Capability.WRITE_FILE},
+                read_only_filesystem=True,
+            ),
+            0,  # Fails restriction check on write_file -> execution_count remains 0
+        ),
+        (PolicyVerdict.ALLOW.value, None, 1),  # Only ALLOW executes underlying tool
+    ]
+
+    for verdict_val, rest_pol, expected_exec_count in verdicts_to_test:
+        raw_tool = MockTool(name="test_tool")
+        wrapper = AegisToolWrapper(
+            underlying_tool=raw_tool,
+            policy_gate=gate,
+            session=session,
+        )
+
+        mock_decision = PolicyDecision(
+            verdict=verdict_val if verdict_val in [v.value for v in PolicyVerdict] else PolicyVerdict.BLOCK.value,
+            reason=f"Testing verdict {verdict_val}",
+            intent_similarity_score=1.0,
+            blast_radius_contained=True,
+            restriction_policy=rest_pol,
+        )
+        if verdict_val not in [v.value for v in PolicyVerdict]:
+            # Simulate a bypass or corrupted verdict object
+            mock_decision = mock_decision.model_copy(update={"verdict": verdict_val})
+
+        gate.evaluate_tool_call = MagicMock(return_value=mock_decision)
+
+        # Execute synchronous run with write argument
+        result = wrapper.run({"filepath": "important.txt", "content": "data"})
+        assert raw_tool.execution_count == expected_exec_count, (
+            f"Execution boundary breached for verdict '{verdict_val}': "
+            f"expected {expected_exec_count} executions, got {raw_tool.execution_count}."
+        )
+
+        # Execute asynchronous arun
+        raw_tool_async = MockTool(name="test_tool_async")
+        wrapper_async = AegisToolWrapper(
+            underlying_tool=raw_tool_async,
+            policy_gate=gate,
+            session=session,
+        )
+        asyncio.run(wrapper_async.arun({"filepath": "important.txt", "content": "data"}))
+        assert raw_tool_async.execution_count == expected_exec_count, (
+            f"Async execution boundary breached for verdict '{verdict_val}': "
+            f"expected {expected_exec_count} executions, got {raw_tool_async.execution_count}."
+        )
+

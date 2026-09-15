@@ -38,6 +38,13 @@ from aegis.sandbox import IsolatedCodeSandbox
 from aegis.sanitizer import ContextSanitizer
 from aegis.taint import SessionContext
 from aegis.tracer import SecurityTracer
+from aegis.validation import (
+    SideEffectCategory,
+    SideEffectRecord,
+    ValidationMode,
+    ValidationScope,
+    ValidationTrace,
+)
 from aegis.types import (
     AuditEvent,
     BehavioralState,
@@ -57,6 +64,11 @@ from aegis.types import (
 
 __version__ = "2.0.0"
 __all__ = [
+    "ValidationMode",
+    "ValidationScope",
+    "ValidationTrace",
+    "SideEffectCategory",
+    "SideEffectRecord",
     "TrustLevel",
     "FieldTrustLevel",
     "FieldProvenance",

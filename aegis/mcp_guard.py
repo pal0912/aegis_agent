@@ -147,12 +147,77 @@ class MCPSecurityGuard:
         Returns:
             Tuple of (is_authorized: bool, status_reason: str, sanitized_arguments: dict).
         """
+        # 0. Scoped and Safe Validation Mode Enforcement
+        val_scope = getattr(session_context, "validation_scope", None)
+        if val_scope is not None:
+            if val_scope.is_expired():
+                reason = f"MCP ValidationScope Expired: Scope {val_scope.validation_id} expired -> Fail-Closed BLOCK"
+                logger.error(reason)
+                self._record_mcp_audit(
+                    server_name=server_name,
+                    tool_name=tool_name,
+                    args=arguments,
+                    session=session_context,
+                    verdict=PolicyVerdict.FAIL_CLOSED,
+                    reason=reason,
+                    mitre_tags=[MitreAtlasTechnique.UNAUTHORIZED_COMMAND_EXECUTION.value],
+                )
+                return False, reason, arguments
+
+            # DRY_RUN mode intercept
+            if getattr(val_scope.mode, "value", str(val_scope.mode)) == "DRY_RUN":
+                reason = f"[AEGIS VALIDATION DRY_RUN CONTAINED]: MCP tool '{tool_name}' execution simulated without side effects."
+                logger.info(reason)
+                self._record_mcp_audit(
+                    server_name=server_name,
+                    tool_name=tool_name,
+                    args=arguments,
+                    session=session_context,
+                    verdict=PolicyVerdict.BLOCK,
+                    reason=reason,
+                    mitre_tags=[],
+                )
+                return False, reason, arguments
+
         # 1. DLP sanitization on parameters
         sanitized_args, dlp_violations = self.dlp.sanitize_tool_args(arguments)
         is_tainted = session_context.is_session_tainted()
 
         # 2. Capability inference & least-privilege boundary gating
         inferred_cap = self.capability_registry.infer_capability(tool_name, sanitized_args)
+
+        if val_scope is not None:
+            if inferred_cap not in val_scope.permitted_capabilities:
+                reason = (
+                    f"MCP ValidationScope Capability Violation: Tool '{tool_name}' requires "
+                    f"capability '{inferred_cap.value}', not permitted in {val_scope.mode.value}."
+                )
+                logger.error(reason)
+                self._record_mcp_audit(
+                    server_name=server_name,
+                    tool_name=tool_name,
+                    args=sanitized_args,
+                    session=session_context,
+                    verdict=PolicyVerdict.BLOCK,
+                    reason=reason,
+                    mitre_tags=[MitreAtlasTechnique.UNAUTHORIZED_COMMAND_EXECUTION.value],
+                )
+                return False, reason, sanitized_args
+
+            side_effect = val_scope.inspect_and_contain_side_effect(tool_name, inferred_cap, sanitized_args)
+            if side_effect is not None:
+                reason = f"[VALIDATION CONTAINED]: {side_effect.reason}"
+                logger.warning("MCP side-effect contained: %s", reason)
+                self._record_mcp_audit(
+                    server_name=server_name,
+                    tool_name=tool_name,
+                    args=sanitized_args,
+                    session=session_context,
+                    verdict=PolicyVerdict.BLOCK,
+                    reason=reason,
+                    mitre_tags=[MitreAtlasTechnique.UNAUTHORIZED_COMMAND_EXECUTION.value],
+                )
+                return False, reason, sanitized_args
 
         if inferred_cap == Capability.UNKNOWN:
             reason = (

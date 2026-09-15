@@ -294,6 +294,16 @@ class AegisToolWrapper(BaseTool):
             )
             self.audit_logger.log_event(event)
 
+        # Check ValidationScope interception before real execution
+        val_scope = getattr(self.session, "validation_scope", None)
+        if val_scope is not None:
+            if val_scope.is_expired():
+                logger.error("AegisToolWrapper: ValidationScope expired -> FAIL_CLOSED")
+                return "[AEGIS VALIDATION EXPIRED]: Scope expired, execution blocked."
+            if getattr(val_scope.mode, "value", str(val_scope.mode)) == "DRY_RUN":
+                logger.info("AegisToolWrapper: Intercepted tool '%s' under DRY_RUN mode.", self.name)
+                return f"[AEGIS VALIDATION DRY_RUN CONTAINED]: Simulated execution of '{self.name}' without side effects."
+
         # 1. ALLOW -> Normal Authorized Execution
         if decision.verdict == PolicyVerdict.ALLOW.value:
             if args:
@@ -362,6 +372,16 @@ class AegisToolWrapper(BaseTool):
             )
             self.audit_logger.log_event(event)
 
+        # Check ValidationScope interception before real execution
+        val_scope = getattr(self.session, "validation_scope", None)
+        if val_scope is not None:
+            if val_scope.is_expired():
+                logger.error("AegisToolWrapper async: ValidationScope expired -> FAIL_CLOSED")
+                return "[AEGIS VALIDATION EXPIRED]: Scope expired, execution blocked."
+            if getattr(val_scope.mode, "value", str(val_scope.mode)) == "DRY_RUN":
+                logger.info("AegisToolWrapper async: Intercepted tool '%s' under DRY_RUN mode.", self.name)
+                return f"[AEGIS VALIDATION DRY_RUN CONTAINED]: Simulated execution of '{self.name}' without side effects."
+
         # 1. ALLOW -> Normal Authorized Async Execution
         if decision.verdict == PolicyVerdict.ALLOW.value:
             if args:
@@ -402,6 +422,13 @@ class AegisToolWrapper(BaseTool):
         **kwargs: Any,
     ) -> Any:
         """Execute underlying tool strictly within the enforced capability and resource envelope."""
+        val_scope = getattr(self.session, "validation_scope", None)
+        if val_scope is not None:
+            if val_scope.is_expired():
+                return "[AEGIS VALIDATION EXPIRED]: Scope expired, execution blocked."
+            if getattr(val_scope.mode, "value", str(val_scope.mode)) == "DRY_RUN":
+                return f"[AEGIS VALIDATION DRY_RUN CONTAINED]: Simulated restricted execution of '{self.name}' without side effects."
+
         violation = self._validate_restrictions(restriction_policy, args_dict)
         if violation is not None:
             logger.warning("AegisToolWrapper restriction violation on tool '%s': %s", self.name, violation)
@@ -428,6 +455,13 @@ class AegisToolWrapper(BaseTool):
         **kwargs: Any,
     ) -> Any:
         """Asynchronously execute underlying tool strictly within the enforced capability and resource envelope."""
+        val_scope = getattr(self.session, "validation_scope", None)
+        if val_scope is not None:
+            if val_scope.is_expired():
+                return "[AEGIS VALIDATION EXPIRED]: Scope expired, execution blocked."
+            if getattr(val_scope.mode, "value", str(val_scope.mode)) == "DRY_RUN":
+                return f"[AEGIS VALIDATION DRY_RUN CONTAINED]: Simulated restricted execution of '{self.name}' without side effects."
+
         violation = self._validate_restrictions(restriction_policy, args_dict)
         if violation is not None:
             logger.warning("AegisToolWrapper async restriction violation on tool '%s': %s", self.name, violation)

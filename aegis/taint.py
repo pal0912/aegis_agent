@@ -23,6 +23,7 @@ class SessionContext:
         root_intent: Optional[str] = None,
         role: Optional[str] = None,
         field_lineage: Optional[Dict[str, FieldProvenance]] = None,
+        validation_scope: Optional[Any] = None,
     ) -> None:
         """Initialize new agent session context with root verified intent.
 
@@ -34,6 +35,7 @@ class SessionContext:
             root_intent: Backward-compatible alias for user_root_intent.
             role: Optional assigned agent role for declarative policy enforcement.
             field_lineage: Optional mapping of field paths to FieldProvenance records.
+            validation_scope: Optional active ValidationScope for safe testing and red-teaming.
         """
         intent = user_root_intent if user_root_intent is not None else (root_intent or "")
         self.session_id: str = session_id or str(uuid.uuid4())
@@ -41,6 +43,8 @@ class SessionContext:
         self.is_tainted: bool = is_tainted
         self.role: Optional[str] = role
         self.field_lineage: Dict[str, FieldProvenance] = dict(field_lineage) if field_lineage else {}
+        self.validation_scope: Optional[Any] = validation_scope
+        self.validation_trace: Optional[Any] = None
 
         if isinstance(trust_level, TrustLevel):
             self.trust_level = trust_level
@@ -61,6 +65,26 @@ class SessionContext:
                 "trust_level": self.trust_level.value,
             }
         ]
+
+        if validation_scope is not None:
+            try:
+                from aegis.validation import ValidationTrace
+                self.validation_trace = ValidationTrace(
+                    validation_id=validation_scope.validation_id,
+                    mode=validation_scope.mode,
+                    capabilities=set(validation_scope.permitted_capabilities),
+                )
+                self.provenance_history.append(
+                    {
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "event": "VALIDATION_SCOPE_ATTACHED",
+                        "validation_id": validation_scope.validation_id,
+                        "mode": getattr(validation_scope.mode, "value", str(validation_scope.mode)),
+                        "trust_level": self.trust_level.value,
+                    }
+                )
+            except Exception:
+                pass
 
     def record_field_provenance(self, provenance_map: Dict[str, FieldProvenance]) -> None:
         """Update field-level lineage records for the active session context."""

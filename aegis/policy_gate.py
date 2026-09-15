@@ -267,6 +267,53 @@ class PolicyGate:
 
         is_tainted = session.is_session_tainted()
 
+        # Step -1: Scoped and Safe Validation Mode Enforcement
+        val_scope = getattr(session, "validation_scope", None)
+        if val_scope is not None:
+            # 1. TTL Expiration Check -> Immediate FAIL_CLOSED
+            if val_scope.is_expired():
+                logger.error("ValidationScope expired for session '%s'", session.session_id)
+                return PolicyDecision(
+                    verdict=PolicyVerdict.FAIL_CLOSED.value,
+                    reason=f"ValidationScope {val_scope.validation_id} expired at {val_scope.expires_at.isoformat()}.",
+                    intent_similarity_score=0.0,
+                    blast_radius_contained=True,
+                    network_verdict="FAIL_CLOSED",
+                    risk_score=1.0,
+                )
+
+            # 2. Maximum Payload Size Enforcement
+            payload_bytes = len(serialized_args.encode("utf-8"))
+            if payload_bytes > val_scope.max_payload_size_bytes:
+                logger.warning(
+                    "ValidationScope payload size %d exceeds limit %d",
+                    payload_bytes,
+                    val_scope.max_payload_size_bytes,
+                )
+                return PolicyDecision(
+                    verdict=PolicyVerdict.BLOCK.value,
+                    reason=f"ValidationScope payload limit exceeded ({payload_bytes} > {val_scope.max_payload_size_bytes} bytes).",
+                    intent_similarity_score=0.0,
+                    blast_radius_contained=True,
+                    network_verdict="PASS",
+                    risk_score=1.0,
+                )
+
+            # 3. Explicit Tool Whitelist Check
+            if val_scope.permitted_tools is not None and tool_proposal.tool_name not in val_scope.permitted_tools:
+                logger.warning(
+                    "ValidationScope tool '%s' not in permitted_tools whitelist",
+                    tool_proposal.tool_name,
+                )
+                return PolicyDecision(
+                    verdict=PolicyVerdict.BLOCK.value,
+                    reason=f"ValidationScope tool whitelist violation: Tool '{tool_proposal.tool_name}' not permitted.",
+                    intent_similarity_score=0.0,
+                    blast_radius_contained=True,
+                    network_verdict="PASS",
+                    risk_score=1.0,
+                )
+
         # Step 0: Circuit Breaker Cascade Isolation Check & Step Counter
         self.circuit_breaker.record_step(session.session_id)
         if self.circuit_breaker.is_tripped(session.session_id):
@@ -292,6 +339,55 @@ class PolicyGate:
             capability = tool_proposal.inferred_capability
         else:
             capability = inferred_cap
+
+        # Step 1c: Scoped Validation Capability Intersection & Side-Effect Containment
+        if val_scope is not None:
+            if capability not in val_scope.permitted_capabilities:
+                logger.warning(
+                    "ValidationScope capability violation: '%s' not in permitted capabilities %s",
+                    capability.value,
+                    [c.value for c in val_scope.permitted_capabilities],
+                )
+                from aegis.validation import SideEffectCategory, SideEffectRecord
+                rec = SideEffectRecord(
+                    category=SideEffectCategory.CAPABILITY_ESCALATION,
+                    tool_name=tool_proposal.tool_name,
+                    reason=f"Attempted unpermitted capability '{capability.value}' under {val_scope.mode.value} validation scope.",
+                    details={"requested_capability": capability.value},
+                )
+                if getattr(session, "validation_trace", None) is not None:
+                    session.validation_trace.record_attempted_side_effect(rec)
+                return PolicyDecision(
+                    verdict=PolicyVerdict.BLOCK.value,
+                    reason=f"ValidationScope capability violation: '{capability.value}' is not permitted in {val_scope.mode.value} mode.",
+                    intent_similarity_score=round(self.compute_similarity(session.user_root_intent, action_description), 4),
+                    blast_radius_contained=True,
+                    network_verdict="PASS",
+                    risk_score=1.0,
+                )
+
+            side_effect = val_scope.inspect_and_contain_side_effect(
+                tool_name=tool_proposal.tool_name,
+                capability=capability,
+                arguments=args,
+                destination=tool_proposal.target_destination,
+            )
+            if side_effect is not None:
+                logger.warning(
+                    "ValidationScope side-effect contained: category=%s, reason=%s",
+                    side_effect.category.value,
+                    side_effect.reason,
+                )
+                if getattr(session, "validation_trace", None) is not None:
+                    session.validation_trace.record_attempted_side_effect(side_effect)
+                return PolicyDecision(
+                    verdict=PolicyVerdict.BLOCK.value,
+                    reason=f"[VALIDATION CONTAINED]: {side_effect.reason}",
+                    intent_similarity_score=round(self.compute_similarity(session.user_root_intent, action_description), 4),
+                    blast_radius_contained=True,
+                    network_verdict="PASS" if side_effect.category.value != "network_egress" else "BLOCKED_DISALLOWED_DOMAIN",
+                    risk_score=1.0,
+                )
 
         similarity = self.compute_similarity(session.user_root_intent, action_description)
         is_detector_miss = bool(detector_scan.is_safe) if detector_scan is not None else True
