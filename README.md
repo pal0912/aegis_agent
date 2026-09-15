@@ -187,8 +187,15 @@ AegisAgent V2 enforces defense-in-depth security through layered deterministic c
 * **AST Static Inspection**: Ephemeral Python sandbox AST analysis blocks known dangerous modules (`subprocess`, `os`, `sys`, `socket`, `pickle`, etc.) and dynamic reflection builtins.
 * **Operating Assumption**: For running hostile, untrusted foreign bytecode in multi-tenant cloud environments, application-level AST inspection should be paired with OS-level virtualization (Docker with seccomp/AppArmor, gVisor, or Firecracker microVMs).
 
-### 3. Execution Boundary & Safe Validation
-* **Wrapper Governance**: Tools must be executed through `AegisToolWrapper` or gated via `PolicyGate.evaluate_tool_call()`. Direct invocations of unwrapped underlying tools bypass the policy gate.
+### 3. Tool Execution Lifecycle & Boundary Guarantee
+* **Lifecycle Flow**:
+  1. **Tool Creation**: Application instantiates raw underlying tools (e.g., LangChain `BaseTool`).
+  2. **Aegis Registration & Guarding**: Application wraps tools using `AegisToolWrapper(tool, ...)` or `AegisToolWrapper.guard_tools([tools], ...)`. The wrapper binds a unique execution token to the underlying tool, locking its internal `_run` and `_arun` entry points.
+  3. **Guarded State**: From the moment of wrapping onward, the raw tool cannot execute directly without an active Aegis execution token (`DirectToolInvocationBlockedError`). Even if references to the underlying tool are extracted via public/private attributes, callbacks, retries, or background workers, direct invocations are blocked.
+  4. **Authorized Execution**: When invoked via `AegisToolWrapper.run()`, the policy gate evaluates the proposal. Only if authorized (`ALLOW` or valid `ALLOW_RESTRICTED`), the wrapper sets the contextual execution token, invokes the underlying tool, and immediately resets the token upon completion.
+  5. **Post-Execution**: The token is revoked via `finally` blocks, returning the underlying tool to its locked state.
+* **Integration & Initialization Assumption**:
+  Aegis guarantees complete execution-boundary enforcement for all tools **from the moment of registration/wrapping onward**. The application environment is assumed to wrap tools during initialization before delegating control to autonomous LLM execution loops; any tool calls performed by unmanaged host application code *prior* to wrapping execute outside of Aegis oversight.
 * **Safe Validation Modes**: Safe validation modes (`DRY_RUN`, `SIMULATION`, `ISOLATED_TEST`) intercept side-effects before real sinks. In production, omitting a `ValidationScope` executes normal authorized policies without simulation interception. Safe mode network destinations require explicit allowlisting and do not implicitly trust localhost or loopback interfaces.
 
 ---
