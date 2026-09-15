@@ -31,9 +31,15 @@ from .contract import (
 )
 
 try:
-    from evals.benchmark_legacy import AegisBenchmarkRunner
+    from evals.benchmark_legacy import (
+        AegisBenchmarkRunner,
+        main,
+        run_all_evals,
+    )
 except ImportError:
     AegisBenchmarkRunner = None
+    run_all_evals = None
+    main = None
 
 __all__ = [
     "BENCHMARK_CONTRACT_VERSION",
@@ -60,4 +66,6 @@ __all__ = [
     "BenchmarkSummaryMetrics",
     "calculate_summary_metrics",
     "AegisBenchmarkRunner",
+    "run_all_evals",
+    "main",
 ]
