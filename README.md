@@ -153,25 +153,43 @@ AegisAgent V2 is a production-hardened, defense-in-depth security runtime protec
 
 AegisAgent V2 is continuously validated against deterministic attack vectors, benign enterprise datasets, adaptive dynamic mutations, and multi-agent execution loops:
 
-| Security Metric | Value | Benchmark Target | Status |
-| :--- | :---: | :---: | :---: |
-| **Overall Defense-in-Depth Containment** | **100.0%** | **100.0% (Zero Breach)** | ✅ PASSED |
-| **Aegis Attack Success Rate (ASR)** | **0.0%** | **0.0% (Zero Breach)** | ✅ PASSED |
-| **Adaptive Red-Team Mutation ASR** | **0.0%** | **0.0% (Zero Bypass)** | ✅ PASSED |
-| **Dual-Agent Consensus Override Rate** | **100.0%** | **100.0% (Zero Drift)** | ✅ PASSED |
-| **Isolated Code Sandbox AST Block Rate** | **100.0%** | **100.0% (Host Isolated)** | ✅ PASSED |
-| **Cryptographic Audit Ledger State** | **VERIFIED** | **SHA-256 + HMAC Integrity** | ✅ PASSED |
-| **Non-Human Identity (NHI) Privilege Gating** | **100.0%** | **100.0% (Zero Escalation)** | ✅ PASSED |
-| **Inter-Agent Anti-Spoofing & Integrity** | **100.0%** | **100.0% (Ed25519 Enforced)** | ✅ PASSED |
-| **Cascading Circuit Breaker Isolation** | **100.0%** | **100.0% (Zero Runaway Cascades)** | ✅ PASSED |
-| **Declarative Policy Hot-Reloading** | **ACTIVE** | **Hot-Reload Validated** | ✅ PASSED |
-| **Model Context Protocol (MCP) Guard Defense** | **100.0%** | **100.0% (Zero Bypass)** | ✅ PASSED |
-| **System Readiness Probe Fail-Closed Verification** | **100.0%** | **100.0% (Tamper Resistant)** | ✅ PASSED |
-| **Field-Level Lineage Taint Propagation** | **100.0%** | **100.0% (Conservative Taint)** | ✅ PASSED |
-| **Behavioral Sequence Anomaly Detection** | **100.0%** | **100.0% (Recon/Loop Catch)** | ✅ PASSED |
-| **ValidationScope & Safe Pre-Flight Containment** | **100.0%** | **100.0% (Zero Side-Effects)** | ✅ PASSED |
-| **Adversarial Red-Team Break-Pass Verification** | **100.0%** | **100.0% (17 / 17 Invariants)** | ✅ PASSED |
-| **Unit & Integration Test Suite** | **178 / 178 Passed** | **100.0% Passing** | ✅ PASSED |
+| Security Metric | Evaluated Result | Benchmark Baseline / Target | Verification Type |
+| :--- | :---: | :---: | :--- |
+| **Overall Defense-in-Depth Containment** | **100.0%** | Benchmark Suite Target: 100.0% | Tested Invariants & Ablations |
+| **Evaluated Attack Success Rate (ASR)** | **0.0%** | Benchmark Attack Vectors: 0.0% ASR | Tested Deterministic Attack Chains |
+| **Adaptive Red-Team Mutation ASR** | **0.0%** | Dynamic Mutation Vectors: 0.0% ASR | Tested Fuzzing & Mutations |
+| **Dual-Agent Consensus Override Rate** | **100.0%** | Disagreement Policy: 100.0% Blocked | Deterministic Enforcement |
+| **Isolated Code Sandbox AST Block Rate** | **100.0%** | Banned Modules / AST Invariants | Deterministic AST Pre-filtering |
+| **Cryptographic Audit Ledger State** | **VERIFIED** | SHA-256 + HMAC Merkle Integrity | Deterministic Cryptographic Proof |
+| **Non-Human Identity (NHI) Privilege Gating** | **100.0%** | Monotonic Ed25519 Delegation Bounds | Cryptographic Token Verification |
+| **Inter-Agent Anti-Spoofing & Replay** | **100.0%** | Nonce Anti-Replay + Canonical Signatures | Tested Multi-Agent Scenarios |
+| **Cascading Circuit Breaker Isolation** | **100.0%** | Depth/Violation Step Thresholds | Deterministic Runtime Limits |
+| **Declarative Policy Hot-Reloading** | **ACTIVE** | Thread-Safe RLock + Snapshot Digests | Tested Concurrency Invariants |
+| **Model Context Protocol (MCP) Interception** | **100.0%** | Evaluated Tool Injection Vectors | Deterministic Schema & DLP Scan |
+| **System Readiness Probe Fail-Closed Check** | **100.0%** | Dependency Tamper Resistance | Deterministic Health Probes |
+| **Field-Level Lineage Taint Propagation** | **100.0%** | Conservative Lineage Tracking | Deterministic Invariant |
+| **Behavioral Sequence Anomaly Detection** | **100.0%** | Critical Automaton Thresholds | Deterministic Gating on Critical |
+| **ValidationScope & Safe Containment** | **100.0%** | Zero Real Sink Executions | Tested Instrumented Sinks |
+| **Adversarial Red-Team Break-Pass Verification** | **100.0%** | 17 / 17 Invariants Verified | Adversarial Break-Pass Testing |
+| **Unit & Integration Test Suite** | **178 / 178 Passed** | 100.0% Passing (0 Regressions) | Automated Regression Suite |
+
+---
+
+## Security Invariants, Operating Assumptions & Residual Risks
+
+AegisAgent V2 enforces defense-in-depth security through layered deterministic controls and probabilistic detectors. To ensure transparent risk management, our security posture explicitly documents guarantees, operating assumptions, and residual risks:
+
+### 1. Deterministic Enforcement vs. Probabilistic Detection
+* **Deterministic Policy Gate**: Mandatory DENY controls (DLP secret leaks, unknown capabilities, SSRF cloud metadata, expired tokens, circuit breakers) strictly override probabilistic approvals. If any mandatory subsystem flags a violation, execution is unconditionally blocked.
+* **Neural Injection Classifier**: DeBERTa-v3 is a probabilistic classifier. While it achieves high accuracy on benchmark datasets, no ML classifier alone guarantees zero false negatives. Aegis relies on downstream deterministic layers (least privilege capabilities, DLP, network guards) to contain unclassified or novel injection vectors.
+
+### 2. Sandbox Isolation Assumptions
+* **AST Static Inspection**: Ephemeral Python sandbox AST analysis blocks known dangerous modules (`subprocess`, `os`, `sys`, `socket`, `pickle`, etc.) and dynamic reflection builtins.
+* **Operating Assumption**: For running hostile, untrusted foreign bytecode in multi-tenant cloud environments, application-level AST inspection should be paired with OS-level virtualization (Docker with seccomp/AppArmor, gVisor, or Firecracker microVMs).
+
+### 3. Execution Boundary & Safe Validation
+* **Wrapper Governance**: Tools must be executed through `AegisToolWrapper` or gated via `PolicyGate.evaluate_tool_call()`. Direct invocations of unwrapped underlying tools bypass the policy gate.
+* **Safe Validation Modes**: Safe validation modes (`DRY_RUN`, `SIMULATION`, `ISOLATED_TEST`) intercept side-effects before real sinks. In production, omitting a `ValidationScope` executes normal authorized policies without simulation interception. Safe mode network destinations require explicit allowlisting and do not implicitly trust localhost or loopback interfaces.
 
 ---
 

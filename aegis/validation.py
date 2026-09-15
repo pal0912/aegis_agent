@@ -155,7 +155,8 @@ class ValidationScope(BaseModel):
     )
     permitted_filesystem_paths: tuple[str, ...] = Field(default_factory=tuple)
     permitted_network_destinations: tuple[str, ...] = Field(
-        default_factory=lambda: ("127.0.0.1", "localhost", "test-container")
+        default_factory=tuple,
+        description="Explicit allowlist of permitted network destinations. Safe modes do not implicitly trust localhost or loopback.",
     )
     permitted_tools: Optional[frozenset[str]] = Field(
         default=None,
