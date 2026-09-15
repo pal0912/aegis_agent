@@ -9,7 +9,7 @@ from enum import Enum
 import hashlib
 from typing import Any, List, Optional
 import uuid
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class TrustLevel(str, Enum):
@@ -199,6 +199,48 @@ class ToolCallProposal(BaseModel):
     )
 
 
+class RestrictedExecutionPolicy(BaseModel):
+    """Execution constraints envelope enforced when PolicyVerdict is ALLOW_RESTRICTED."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    policy_id: str = Field(default_factory=lambda: f"rep_{uuid.uuid4().hex[:8]}")
+    allowed_capabilities: set[Capability] = Field(
+        default_factory=lambda: {Capability.READ_PUBLIC},
+        description="Explicit subset of capabilities permitted during restricted execution.",
+    )
+    read_only_filesystem: bool = Field(
+        default=True, description="Strictly forbid filesystem mutations (create/edit/delete)."
+    )
+    allow_network_egress: bool = Field(
+        default=False, description="Strictly forbid outbound socket / HTTP requests unless explicitly whitelisted."
+    )
+    allowed_network_domains: List[str] = Field(
+        default_factory=list, description="Explicitly whitelisted domains if network egress is permitted."
+    )
+    allow_database_writes: bool = Field(
+        default=False, description="Strictly forbid database mutations (insert/update/delete/drop)."
+    )
+    allow_external_messaging: bool = Field(
+        default=False, description="Strictly forbid outbound messaging (email/slack/sms/webhooks)."
+    )
+    allow_secret_access: bool = Field(
+        default=False, description="Strictly forbid reading environment variables, credentials, or private secrets."
+    )
+    max_payload_size_bytes: int = Field(
+        default=65536, description="Maximum argument/payload size in bytes."
+    )
+    sanitize_output: bool = Field(
+        default=True, description="Apply boundary isolation and sanitization to tool execution output."
+    )
+    execution_timeout_sec: float = Field(
+        default=5.0, description="Strict execution timeout in seconds."
+    )
+    policy_version: str = Field(
+        default="2.0", description="Policy version under which this restriction was formulated."
+    )
+
+
 class PolicyDecision(BaseModel):
     """Deterministic policy gate decision evaluating agent tool execution requests."""
 
@@ -206,7 +248,7 @@ class PolicyDecision(BaseModel):
 
     verdict: str = Field(
         ...,
-        description="Policy gate decision verdict: 'ALLOW', 'BLOCK', or 'REQUIRE_HUMAN_APPROVAL'.",
+        description="Policy gate decision verdict: 'ALLOW', 'ALLOW_RESTRICTED', 'BLOCK', 'REQUIRE_HUMAN_APPROVAL', or 'FAIL_CLOSED'.",
     )
     reason: str = Field(
         ...,
@@ -272,6 +314,18 @@ class PolicyDecision(BaseModel):
         default_factory=list,
         description="Specific argument paths flagged for carrying untrusted data origins.",
     )
+    restriction_policy: Optional[RestrictedExecutionPolicy] = Field(
+        default=None,
+        description="Active capability restriction envelope if verdict is ALLOW_RESTRICTED.",
+    )
+    policy_version: str = Field(
+        default="2.0",
+        description="Policy version under which this decision was rendered.",
+    )
+    policy_snapshot_hash: Optional[str] = Field(
+        default=None,
+        description="SHA-256 cryptographic digest of active declarative policy schema.",
+    )
 
     @field_validator("verdict")
     @classmethod
@@ -280,6 +334,12 @@ class PolicyDecision(BaseModel):
         if v not in valid:
             raise ValueError(f"verdict must be one of {sorted(valid)}, got '{v}'")
         return v
+
+    @model_validator(mode="after")
+    def validate_restriction_policy(self) -> "PolicyDecision":
+        if self.verdict == PolicyVerdict.ALLOW_RESTRICTED.value and self.restriction_policy is None:
+            raise ValueError("ALLOW_RESTRICTED requires a valid restriction_policy.")
+        return self
 
 
 class MitreAtlasTechnique(str, Enum):
@@ -396,6 +456,14 @@ class AuditEvent(BaseModel):
     ledger_signature: Optional[str] = Field(
         default=None,
         description="HMAC-SHA256 signature guaranteeing ledger authenticity.",
+    )
+    policy_version: Optional[str] = Field(
+        default="2.0",
+        description="Policy version under which this audit event was generated.",
+    )
+    policy_snapshot_hash: Optional[str] = Field(
+        default=None,
+        description="Cryptographic SHA-256 hash of active declarative policy schema.",
     )
 
     @staticmethod

@@ -35,6 +35,7 @@ from aegis.types import (
     FieldTrustLevel,
     PolicyDecision,
     PolicyVerdict,
+    RestrictedExecutionPolicy,
     ScanResult,
     ToolCallProposal,
     ToolPrivilege,
@@ -227,7 +228,7 @@ class PolicyGate:
             Deterministic PolicyDecision model.
         """
         try:
-            return self._evaluate_tool_call_internal(session, tool_proposal, detector_scan)
+            decision = self._evaluate_tool_call_internal(session, tool_proposal, detector_scan)
         except Exception as e:
             logger.error("Fail-Closed trigger in PolicyGate: %s", e, exc_info=True)
             return PolicyDecision(
@@ -237,7 +238,20 @@ class PolicyGate:
                 blast_radius_contained=True,
                 network_verdict="FAIL_CLOSED",
                 risk_score=1.0,
+                policy_version=getattr(self.declarative_policy, "version", None) if self.declarative_policy else None,
+                policy_snapshot_hash=getattr(self.declarative_policy, "snapshot_hash", None) if self.declarative_policy else None,
             )
+
+        policy_ver = getattr(self.declarative_policy, "version", None) if self.declarative_policy else None
+        snapshot_hash = getattr(self.declarative_policy, "snapshot_hash", None) if self.declarative_policy else None
+        updates = {}
+        if decision.policy_version is None and policy_ver is not None:
+            updates["policy_version"] = policy_ver
+        if decision.policy_snapshot_hash is None and snapshot_hash is not None:
+            updates["policy_snapshot_hash"] = snapshot_hash
+        if updates:
+            return decision.model_copy(update=updates)
+        return decision
 
     def _evaluate_tool_call_internal(
         self,
@@ -655,3 +669,100 @@ class PolicyGate:
     def execute_sandboxed_tool(self, code: str, timeout_sec: Optional[float] = None) -> dict[str, Any]:
         """Execute Python code in the ephemeral isolated sandbox environment."""
         return self.sandbox.execute_sandboxed(code, timeout_sec=timeout_sec)
+
+    def create_restricted_policy(
+        self,
+        policy_id: Optional[str] = None,
+        allowed_capabilities: Optional[Set[Capability]] = None,
+        read_only_filesystem: bool = True,
+        allow_network_egress: bool = False,
+        allowed_network_domains: Optional[List[str]] = None,
+        allow_database_writes: bool = False,
+        allow_external_messaging: bool = False,
+        allow_secret_access: bool = False,
+        max_payload_size_bytes: int = 65536,
+        sanitize_output: bool = True,
+        execution_timeout_sec: float = 5.0,
+    ) -> RestrictedExecutionPolicy:
+        """Construct a validated RestrictedExecutionPolicy tied to the active declarative schema version."""
+        kwargs: Dict[str, Any] = {
+            "allowed_capabilities": allowed_capabilities or {Capability.READ_PUBLIC},
+            "read_only_filesystem": read_only_filesystem,
+            "allow_network_egress": allow_network_egress,
+            "allowed_network_domains": allowed_network_domains or [],
+            "allow_database_writes": allow_database_writes,
+            "allow_external_messaging": allow_external_messaging,
+            "allow_secret_access": allow_secret_access,
+            "max_payload_size_bytes": max_payload_size_bytes,
+            "sanitize_output": sanitize_output,
+            "execution_timeout_sec": execution_timeout_sec,
+            "policy_version": self.declarative_policy.version,
+        }
+        if policy_id is not None:
+            kwargs["policy_id"] = policy_id
+        return RestrictedExecutionPolicy(**kwargs)
+
+    def evaluate_tool_call_restricted(
+        self,
+        session: SessionContext,
+        tool_proposal: ToolCallProposal,
+        restriction_policy: RestrictedExecutionPolicy,
+        detector_scan: Optional[ScanResult] = None,
+    ) -> PolicyDecision:
+        """Evaluate a tool proposal under explicit restricted execution policy constraints.
+
+        Enforces:
+        1. Mandatory DENY dominance (if base security checks fail, restriction cannot override).
+        2. Invariant 5: EffectiveCapabilities ⊆ OriginalAuthorized ∩ RestrictedCapabilities.
+        3. Missing or invalid restriction policy fails closed.
+        """
+        if not restriction_policy or not isinstance(restriction_policy, RestrictedExecutionPolicy):
+            return PolicyDecision(
+                verdict=PolicyVerdict.FAIL_CLOSED.value,
+                reason="Restricted execution requested but restriction_policy is missing or invalid.",
+                intent_similarity_score=0.0,
+                blast_radius_contained=True,
+                risk_score=1.0,
+                policy_version=self.declarative_policy.version,
+                policy_snapshot_hash=self.declarative_policy.snapshot_hash,
+            )
+
+        # 1. Base evaluation must first pass security checks (mandatory DENY dominates)
+        base_decision = self.evaluate_tool_call(session, tool_proposal, detector_scan)
+        if base_decision.verdict in (PolicyVerdict.BLOCK.value, PolicyVerdict.FAIL_CLOSED.value):
+            return base_decision
+
+        # 2. Invariant 5: Effective capabilities ⊆ OriginalAuthorized ∩ Restricted
+        inferred_cap = self.capability_registry.infer_capability(tool_proposal.tool_name, tool_proposal.arguments)
+        if inferred_cap not in restriction_policy.allowed_capabilities:
+            return PolicyDecision(
+                verdict=PolicyVerdict.BLOCK.value,
+                reason=(
+                    f"Restricted policy violation: Inferred capability '{inferred_cap.value}' "
+                    f"is not granted by active RestrictedExecutionPolicy '{restriction_policy.policy_id}'."
+                ),
+                intent_similarity_score=base_decision.intent_similarity_score,
+                blast_radius_contained=True,
+                network_verdict=base_decision.network_verdict,
+                risk_score=base_decision.risk_score,
+                policy_version=self.declarative_policy.version,
+                policy_snapshot_hash=self.declarative_policy.snapshot_hash,
+            )
+
+        # 3. Formulate ALLOW_RESTRICTED decision with attached verified restriction policy
+        return PolicyDecision(
+            verdict=PolicyVerdict.ALLOW_RESTRICTED.value,
+            reason=f"Restricted operation: Tool '{tool_proposal.tool_name}' permitted under restriction policy {restriction_policy.policy_id}.",
+            intent_similarity_score=base_decision.intent_similarity_score,
+            blast_radius_contained=base_decision.blast_radius_contained,
+            dlp_violations=base_decision.dlp_violations,
+            network_verdict=base_decision.network_verdict,
+            risk_score=base_decision.risk_score,
+            consensus_approved=base_decision.consensus_approved,
+            consensus_details=base_decision.consensus_details,
+            behavioral_state=base_decision.behavioral_state,
+            behavioral_score=base_decision.behavioral_score,
+            restriction_policy=restriction_policy,
+            policy_version=self.declarative_policy.version,
+            policy_snapshot_hash=self.declarative_policy.snapshot_hash,
+        )

@@ -4,6 +4,7 @@ Decouples hardcoded rules into declarative, hot-reloadable YAML/JSON security po
 supporting fine-grained role capabilities, delegation limits, and network restrictions.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -153,10 +154,21 @@ network:
                 raise ValueError("Declarative policy content must parse to a dictionary root.")
             policy = DeclarativePolicySchema.model_validate(raw_data)
             self._policy = policy
+            self._snapshot_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
             return policy
         except Exception as exc:
             logger.error(f"DeclarativePolicyEngine parsing error: {exc}")
             raise ValueError(f"Failed to parse declarative policy: {exc}") from exc
+
+    @property
+    def snapshot_hash(self) -> str:
+        """Cryptographic SHA-256 digest of active policy schema."""
+        return getattr(self, "_snapshot_hash", "")
+
+    @property
+    def version(self) -> str:
+        """Active policy version string."""
+        return self._policy.version
 
     def reload(self) -> DeclarativePolicySchema:
         """Hot-reload policy from disk without restarting the host process."""

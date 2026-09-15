@@ -24,7 +24,16 @@ from aegis.policy_gate import PolicyGate
 from aegis.sanitizer import ContextSanitizer
 from aegis.taint import SessionContext
 from aegis.tracer import SecurityTracer
-from aegis.types import AuditEvent, Capability, PolicyDecision, PolicyVerdict, ScanResult, ToolCallProposal, TrustLevel
+from aegis.types import (
+    AuditEvent,
+    Capability,
+    PolicyDecision,
+    PolicyVerdict,
+    RestrictedExecutionPolicy,
+    ScanResult,
+    ToolCallProposal,
+    TrustLevel,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +86,7 @@ class MCPExecuteRequest(BaseModel):
     session_id: Optional[str] = None
     root_intent: Optional[str] = "Execute tool operation"
     is_tainted: Optional[bool] = False
+    restriction_policy: Optional[RestrictedExecutionPolicy] = None
 
 
 class MCPExecuteResponse(BaseModel):
@@ -222,6 +232,7 @@ def create_gateway_app(
             tool_name=req.tool_name,
             arguments=req.arguments,
             session_context=session,
+            restriction_policy=req.restriction_policy,
         )
 
         status_code = status.HTTP_200_OK if authorized else status.HTTP_403_FORBIDDEN
@@ -362,9 +373,8 @@ def create_gateway_app(
                 scan_result=scan_result,
                 policy_decision=policy_decision,
             ))
-
-            if policy_decision.verdict == PolicyVerdict.BLOCK.value:
-                # Return synthetic tool execution rejection
+            if policy_decision.verdict not in {PolicyVerdict.ALLOW.value, PolicyVerdict.ALLOW_RESTRICTED.value}:
+                # Fail-closed: return synthetic tool execution rejection for any non-ALLOW verdict
                 return JSONResponse(
                     status_code=status.HTTP_200_OK,
                     content={

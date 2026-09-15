@@ -20,7 +20,15 @@ from aegis.memory_guard import MemoryEntry, MemoryGuard
 from aegis.policy_gate import PolicyGate
 from aegis.sanitizer import ContextSanitizer
 from aegis.taint import SessionContext
-from aegis.types import AuditEvent, PolicyVerdict, ScanResult, ToolCallProposal, TrustLevel
+from aegis.types import (
+    AuditEvent,
+    Capability,
+    PolicyVerdict,
+    RestrictedExecutionPolicy,
+    ScanResult,
+    ToolCallProposal,
+    TrustLevel,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -281,20 +289,25 @@ class AegisToolWrapper(BaseTool):
                 raw_content_sha256=AuditEvent.hash_payload(raw_payload),
                 scan_result=self.last_detector_scan,
                 policy_decision=decision,
+                policy_version=decision.policy_version,
+                policy_snapshot_hash=decision.policy_snapshot_hash,
             )
             self.audit_logger.log_event(event)
 
-        if decision.verdict == PolicyVerdict.BLOCK.value:
-            logger.warning(
-                "AegisToolWrapper blocked tool '%s' execution: %s",
-                self.name,
-                decision.reason,
-            )
-            return (
-                f"[AEGIS POLICY GATE BLOCKED]: Unauthorized action '{self.name}' prevented. "
-                f"Reason: {decision.reason}"
-            )
+        # 1. ALLOW -> Normal Authorized Execution
+        if decision.verdict == PolicyVerdict.ALLOW.value:
+            if args:
+                return self.underlying_tool.run(*args, **kwargs)
+            return self.underlying_tool.run(args_dict)
 
+        # 2. ALLOW_RESTRICTED -> Execute strictly within verified restriction envelope
+        if decision.verdict == PolicyVerdict.ALLOW_RESTRICTED.value:
+            if not decision.restriction_policy or not isinstance(decision.restriction_policy, RestrictedExecutionPolicy):
+                logger.error("AegisToolWrapper: Missing or invalid restriction_policy for ALLOW_RESTRICTED -> Fail-Closed BLOCK")
+                return "[AEGIS POLICY GATE BLOCKED]: ALLOW_RESTRICTED missing valid restriction envelope."
+            return self._execute_restricted(decision.restriction_policy, args_dict, *args, **kwargs)
+
+        # 3. REQUIRE_HUMAN_APPROVAL -> Halt for Operator Approval
         if decision.verdict in {PolicyVerdict.REQUIRE_HUMAN_APPROVAL.value, "REQUIRE_HUMAN_APPROVAL"}:
             logger.info(
                 "AegisToolWrapper halted tool '%s' for human approval (risk score: %.2f)",
@@ -306,8 +319,17 @@ class AegisToolWrapper(BaseTool):
                 f"Reason: {decision.reason} (Risk Score: {decision.risk_score:.2f})"
             )
 
-        # Allow verdict: execute underlying tool
-        return self.underlying_tool.run(*args, **kwargs)
+        # 4. All other verdicts (BLOCK, FAIL_CLOSED, QUARANTINE, unknown) -> Strictly Blocked
+        logger.warning(
+            "AegisToolWrapper denied tool '%s' execution (verdict: %s): %s",
+            self.name,
+            decision.verdict,
+            decision.reason,
+        )
+        return (
+            f"[AEGIS POLICY GATE BLOCKED]: Unauthorized action '{self.name}' prevented. "
+            f"Reason: {decision.reason}"
+        )
 
     async def _arun(self, *args: Any, **kwargs: Any) -> Any:
         """Asynchronously evaluate policy gate before executing underlying tool."""
@@ -335,24 +357,169 @@ class AegisToolWrapper(BaseTool):
                 raw_content_sha256=AuditEvent.hash_payload(raw_payload),
                 scan_result=self.last_detector_scan,
                 policy_decision=decision,
+                policy_version=decision.policy_version,
+                policy_snapshot_hash=decision.policy_snapshot_hash,
             )
             self.audit_logger.log_event(event)
 
-        if decision.verdict == PolicyVerdict.BLOCK.value:
-            logger.warning(
-                "AegisToolWrapper async blocked tool '%s' execution: %s",
-                self.name,
-                decision.reason,
-            )
-            return (
-                f"[AEGIS POLICY GATE BLOCKED]: Unauthorized action '{self.name}' prevented. "
-                f"Reason: {decision.reason}"
-            )
+        # 1. ALLOW -> Normal Authorized Async Execution
+        if decision.verdict == PolicyVerdict.ALLOW.value:
+            if args:
+                return await self.underlying_tool.arun(*args, **kwargs)
+            return await self.underlying_tool.arun(args_dict)
 
+        # 2. ALLOW_RESTRICTED -> Execute strictly within verified restriction envelope
+        if decision.verdict == PolicyVerdict.ALLOW_RESTRICTED.value:
+            if not decision.restriction_policy or not isinstance(decision.restriction_policy, RestrictedExecutionPolicy):
+                logger.error("AegisToolWrapper async: Missing or invalid restriction_policy for ALLOW_RESTRICTED -> Fail-Closed BLOCK")
+                return "[AEGIS POLICY GATE BLOCKED]: ALLOW_RESTRICTED missing valid restriction envelope."
+            return await self._aexecute_restricted(decision.restriction_policy, args_dict, *args, **kwargs)
+
+        # 3. REQUIRE_HUMAN_APPROVAL -> Halt for Operator Approval
         if decision.verdict in {PolicyVerdict.REQUIRE_HUMAN_APPROVAL.value, "REQUIRE_HUMAN_APPROVAL"}:
             return (
                 f"[AEGIS HUMAN APPROVAL REQUIRED]: Action '{self.name}' requires operator authorization. "
                 f"Reason: {decision.reason} (Risk Score: {decision.risk_score:.2f})"
             )
 
-        return await self.underlying_tool.arun(*args, **kwargs)
+        # 4. All other verdicts (BLOCK, FAIL_CLOSED, QUARANTINE, unknown) -> Strictly Blocked
+        logger.warning(
+            "AegisToolWrapper async denied tool '%s' execution (verdict: %s): %s",
+            self.name,
+            decision.verdict,
+            decision.reason,
+        )
+        return (
+            f"[AEGIS POLICY GATE BLOCKED]: Unauthorized action '{self.name}' prevented. "
+            f"Reason: {decision.reason}"
+        )
+
+    def _execute_restricted(
+        self,
+        restriction_policy: RestrictedExecutionPolicy,
+        args_dict: Dict[str, Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Execute underlying tool strictly within the enforced capability and resource envelope."""
+        violation = self._validate_restrictions(restriction_policy, args_dict)
+        if violation is not None:
+            logger.warning("AegisToolWrapper restriction violation on tool '%s': %s", self.name, violation)
+            return f"[AEGIS RESTRICTION VIOLATION]: {violation}"
+
+        if args:
+            raw_output = self.underlying_tool.run(*args, **kwargs)
+        else:
+            raw_output = self.underlying_tool.run(args_dict)
+
+        if restriction_policy.sanitize_output:
+            sanitizer = ContextSanitizer()
+            return sanitizer.sanitize_and_encapsulate(
+                str(raw_output) if raw_output is not None else "",
+                source_label=f"restricted_{self.name}",
+            )
+        return raw_output
+
+    async def _aexecute_restricted(
+        self,
+        restriction_policy: RestrictedExecutionPolicy,
+        args_dict: Dict[str, Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Asynchronously execute underlying tool strictly within the enforced capability and resource envelope."""
+        violation = self._validate_restrictions(restriction_policy, args_dict)
+        if violation is not None:
+            logger.warning("AegisToolWrapper async restriction violation on tool '%s': %s", self.name, violation)
+            return f"[AEGIS RESTRICTION VIOLATION]: {violation}"
+
+        if args:
+            raw_output = await self.underlying_tool.arun(*args, **kwargs)
+        else:
+            raw_output = await self.underlying_tool.arun(args_dict)
+
+        if restriction_policy.sanitize_output:
+            sanitizer = ContextSanitizer()
+            return sanitizer.sanitize_and_encapsulate(
+                str(raw_output) if raw_output is not None else "",
+                source_label=f"restricted_{self.name}",
+            )
+        return raw_output
+
+    def _validate_restrictions(
+        self,
+        restriction_policy: RestrictedExecutionPolicy,
+        args_dict: Dict[str, Any],
+    ) -> Optional[str]:
+        """Validate execution parameters against the RestrictedExecutionPolicy envelope."""
+        if not restriction_policy or not isinstance(restriction_policy, RestrictedExecutionPolicy):
+            return "Invalid or missing restriction policy envelope."
+
+        # Inferred capability check
+        inferred_cap = self.policy_gate.capability_registry.infer_capability(self.name, args_dict)
+        if inferred_cap not in restriction_policy.allowed_capabilities:
+            return (
+                f"Capability '{inferred_cap.value}' exceeds restricted capability envelope "
+                f"{[c.value for c in restriction_policy.allowed_capabilities]}."
+            )
+
+        # Payload size limit
+        serialized = json.dumps(args_dict, sort_keys=True)
+        if len(serialized.encode("utf-8")) > restriction_policy.max_payload_size_bytes:
+            return (
+                f"Payload size {len(serialized)} bytes exceeds maximum permitted limit of "
+                f"{restriction_policy.max_payload_size_bytes} bytes."
+            )
+
+        str_args = str(args_dict).lower()
+
+        # Filesystem restrictions
+        if restriction_policy.read_only_filesystem:
+            if inferred_cap in {Capability.WRITE_FILE, Capability.ADMIN} or any(
+                k in str_args for k in ["write", "delete", "unlink", "truncate", "overwrite", "append"]
+            ):
+                return "Filesystem mutations strictly prohibited under read-only restriction."
+
+        # Database restrictions
+        if not restriction_policy.allow_database_writes:
+            if inferred_cap in {Capability.WRITE_DATABASE, Capability.ADMIN} or any(
+                w in str_args for w in ["insert ", "update ", "delete ", "drop ", "truncate "]
+            ):
+                return "Database writes strictly prohibited under restriction policy."
+
+        # External messaging restrictions
+        if not restriction_policy.allow_external_messaging:
+            if inferred_cap == Capability.SEND_EXTERNAL_MESSAGE or any(
+                k in self.name.lower() for k in ["email", "slack", "sms", "webhook", "mail"]
+            ):
+                return "External messaging strictly prohibited under restriction policy."
+
+        # Secret access restrictions
+        if not restriction_policy.allow_secret_access:
+            if any(
+                k in str_args for k in ["get_secret", "passwd", "credential", "api_key", "token", "private_key", ".env", "secret"]
+            ) or any(k in self.name.lower() for k in ["secret", "credential", "vault", "token"]):
+                return "Secret access strictly prohibited under restriction policy."
+
+        # Network egress restrictions
+        if not restriction_policy.allow_network_egress:
+            if inferred_cap == Capability.NETWORK_EXTERNAL or any(
+                kw in str_args for kw in ["http://", "https://", "ftp://", "ws://"]
+            ):
+                return "Network egress strictly prohibited under restriction policy."
+        elif restriction_policy.allowed_network_domains:
+            import urllib.parse
+            urls = self.policy_gate._extract_all_urls(args_dict)
+            for u in urls:
+                try:
+                    parsed = urllib.parse.urlparse(u)
+                    hostname = parsed.hostname or ""
+                    if not any(
+                        hostname == dom or hostname.endswith("." + dom.lstrip("*."))
+                        for dom in restriction_policy.allowed_network_domains
+                    ):
+                        return f"Egress to domain '{hostname}' not permitted under restriction policy."
+                except Exception:
+                    return f"Invalid or unparseable target URL: '{u}'."
+
+        return None
