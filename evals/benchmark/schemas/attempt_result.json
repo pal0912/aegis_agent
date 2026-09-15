@@ -11,6 +11,20 @@
       "title": "AttemptValidity",
       "type": "string"
     },
+    "BenignOutcome": {
+      "description": "Intervention and utility outcome taxonomy for benign workloads.",
+      "enum": [
+        "NO_INTERVENTION",
+        "RESTRICTED_BUT_SUCCESSFUL",
+        "INAPPROPRIATE_BLOCK",
+        "INAPPROPRIATE_QUARANTINE",
+        "TASK_SUCCESS",
+        "TASK_FAILURE",
+        "INCONCLUSIVE"
+      ],
+      "title": "BenignOutcome",
+      "type": "string"
+    },
     "BlastRadiusLevel": {
       "description": "Aegis-specific blast-radius scoring level (0-6).",
       "enum": [
@@ -85,7 +99,7 @@
       "type": "object"
     },
     "ControlState": {
-      "description": "Activation state of an individual security control during an attempt.",
+      "description": "Activation state of an individual security control during attempt.",
       "enum": [
         "NOT_TRIGGERED",
         "TRIGGERED",
@@ -258,7 +272,7 @@
       "type": "string"
     },
     "SecurityOutcome": {
-      "description": "Final security outcome of a VALID attempt.\n\nNOTE: If AttemptValidity != VALID (e.g. ERROR, INCONCLUSIVE, INVALID),\nSecurityOutcome MUST strictly be NOT_APPLICABLE.",
+      "description": "Final security outcome of a VALID adversarial attempt.\n\nNOTE: If AttemptValidity != VALID (e.g. ERROR, INCONCLUSIVE, INVALID)\nOR if the attempt is benign, SecurityOutcome MUST strictly be\nNOT_APPLICABLE.",
       "enum": [
         "NOT_APPLICABLE",
         "DETECTED",
@@ -292,7 +306,31 @@
       "$ref": "#/$defs/AttemptValidity"
     },
     "final_security_outcome": {
-      "$ref": "#/$defs/SecurityOutcome"
+      "$ref": "#/$defs/SecurityOutcome",
+      "default": "NOT_APPLICABLE"
+    },
+    "benign_outcome": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BenignOutcome"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "task_successful": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Task Successful"
     },
     "objective_transition": {
       "$ref": "#/$defs/ObjectiveStateTransition"
@@ -352,8 +390,7 @@
     "scenario_id",
     "condition",
     "scenario_validity",
-    "attempt_validity",
-    "final_security_outcome"
+    "attempt_validity"
   ],
   "title": "AttemptResult",
   "type": "object"

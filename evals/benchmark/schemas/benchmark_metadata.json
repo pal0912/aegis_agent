@@ -1,5 +1,5 @@
 {
-  "description": "Reproducibility metadata recording exact environment and configuration.",
+  "description": "Reproducibility metadata recording exact environment.",
   "properties": {
     "benchmark_name": {
       "default": "AegisAgent Security Benchmark",

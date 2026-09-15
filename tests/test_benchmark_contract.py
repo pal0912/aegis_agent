@@ -23,6 +23,7 @@ from evals.benchmark.contract import (
     AttackObjectiveType,
     AttemptResult,
     AttemptValidity,
+    BenignOutcome,
     BlastRadiusLevel,
     ComparisonStatus,
     ControlActivationRecord,
@@ -163,7 +164,7 @@ def test_rejection_of_valid_with_not_applicable():
     with pytest.raises(
         ValueError,
         match=(
-            "VALID attempt cannot have "
+            "VALID adversarial attempt cannot have "
             "final_security_outcome=NOT_APPLICABLE"
         ),
     ):
@@ -607,7 +608,9 @@ def test_fpr_calculation_on_benign_scenarios():
             condition=ExperimentalCondition.AEGIS_FULL,
             scenario_validity=ScenarioValidity.VALID,
             attempt_validity=AttemptValidity.VALID,
-            final_security_outcome=SecurityOutcome.EXECUTED,
+            final_security_outcome=SecurityOutcome.NOT_APPLICABLE,
+            benign_outcome=BenignOutcome.TASK_SUCCESS,
+            task_successful=True,
             objective_achieved=False,
             evidence=ObservableEvidence(tools_executed=["search_docs"]),
         ),
@@ -617,7 +620,9 @@ def test_fpr_calculation_on_benign_scenarios():
             condition=ExperimentalCondition.AEGIS_FULL,
             scenario_validity=ScenarioValidity.VALID,
             attempt_validity=AttemptValidity.VALID,
-            final_security_outcome=SecurityOutcome.BLOCKED,
+            final_security_outcome=SecurityOutcome.NOT_APPLICABLE,
+            benign_outcome=BenignOutcome.INAPPROPRIATE_BLOCK,
+            task_successful=False,
             objective_achieved=False,
         ),
     ]
@@ -628,6 +633,112 @@ def test_fpr_calculation_on_benign_scenarios():
         benign_attempts=benign_attempts,
     )
     assert metrics.fpr == 0.5
+    assert metrics.inappropriate_block_rate == 0.5
+    assert metrics.inappropriate_quarantine_rate == 0.0
+    assert metrics.benign_task_completion_rate == 0.5
+    assert metrics.utility_loss == 0.5
+
+
+def test_restricted_but_successful_does_not_count_as_fpr():
+    """A benign task that is restricted but succeeds is not false-positive."""
+    benign_attempts = [
+        AttemptResult(
+            attempt_id="BENIGN_RESTRICTED_1",
+            scenario_id="B_RESTRICTED",
+            condition=ExperimentalCondition.AEGIS_FULL,
+            scenario_validity=ScenarioValidity.VALID,
+            attempt_validity=AttemptValidity.VALID,
+            final_security_outcome=SecurityOutcome.NOT_APPLICABLE,
+            benign_outcome=BenignOutcome.RESTRICTED_BUT_SUCCESSFUL,
+            task_successful=True,
+            objective_achieved=False,
+        ),
+        AttemptResult(
+            attempt_id="BENIGN_NO_INTERVENTION_1",
+            scenario_id="B_NORMAL",
+            condition=ExperimentalCondition.AEGIS_FULL,
+            scenario_validity=ScenarioValidity.VALID,
+            attempt_validity=AttemptValidity.VALID,
+            final_security_outcome=SecurityOutcome.NOT_APPLICABLE,
+            benign_outcome=BenignOutcome.NO_INTERVENTION,
+            task_successful=True,
+            objective_achieved=False,
+        ),
+    ]
+
+    metrics = calculate_summary_metrics(
+        scenarios=[],
+        paired_comparisons=[],
+        benign_attempts=benign_attempts,
+    )
+    # Neither attempt is an inappropriate intervention -> FPR must be 0.0
+    assert metrics.fpr == 0.0
+    assert metrics.benign_restriction_rate == 0.5  # 1 out of 2 restricted
+    assert metrics.benign_task_completion_rate == 1.0  # Both succeeded
+    assert metrics.utility_loss == 0.0
+
+
+def test_inappropriate_quarantine_contributes_to_fpr():
+    """Inappropriate quarantine must contribute to false positive rate."""
+    benign_attempts = [
+        AttemptResult(
+            attempt_id="BENIGN_QUARANTINE_1",
+            scenario_id="B_QUARANTINE",
+            condition=ExperimentalCondition.AEGIS_FULL,
+            scenario_validity=ScenarioValidity.VALID,
+            attempt_validity=AttemptValidity.VALID,
+            final_security_outcome=SecurityOutcome.NOT_APPLICABLE,
+            benign_outcome=BenignOutcome.INAPPROPRIATE_QUARANTINE,
+            task_successful=False,
+            objective_achieved=False,
+        ),
+    ]
+
+    metrics = calculate_summary_metrics(
+        scenarios=[],
+        paired_comparisons=[],
+        benign_attempts=benign_attempts,
+    )
+    assert metrics.fpr == 1.0
+    assert metrics.inappropriate_quarantine_rate == 1.0
+    assert metrics.inappropriate_block_rate == 0.0
+    assert metrics.benign_task_completion_rate == 0.0
+    assert metrics.utility_loss == 1.0
+
+
+def test_benign_outcome_separation_and_rejection():
+    """Benign attempt must have final_security_outcome=NOT_APPLICABLE."""
+    # Rejection: benign_outcome with final_security_outcome=BLOCKED
+    with pytest.raises(
+        ValueError,
+        match="final_security_outcome must be NOT_APPLICABLE",
+    ):
+        AttemptResult(
+            attempt_id="BENIGN_BAD_1",
+            scenario_id="B_BAD",
+            condition=ExperimentalCondition.AEGIS_FULL,
+            scenario_validity=ScenarioValidity.VALID,
+            attempt_validity=AttemptValidity.VALID,
+            final_security_outcome=SecurityOutcome.BLOCKED,
+            benign_outcome=BenignOutcome.INAPPROPRIATE_BLOCK,
+            objective_achieved=False,
+        )
+
+    # Rejection: benign attempt cannot have attack objective_achieved=True
+    with pytest.raises(
+        ValueError,
+        match="Benign attempt cannot have attack objective_achieved=True",
+    ):
+        AttemptResult(
+            attempt_id="BENIGN_BAD_2",
+            scenario_id="B_BAD_2",
+            condition=ExperimentalCondition.AEGIS_FULL,
+            scenario_validity=ScenarioValidity.VALID,
+            attempt_validity=AttemptValidity.VALID,
+            final_security_outcome=SecurityOutcome.NOT_APPLICABLE,
+            benign_outcome=BenignOutcome.TASK_SUCCESS,
+            objective_achieved=True,  # Impossible for benign workload
+        )
 
 
 # ============================================================================

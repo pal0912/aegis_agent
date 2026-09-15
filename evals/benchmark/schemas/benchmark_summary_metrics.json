@@ -121,6 +121,16 @@
       "default": null,
       "title": "Exfiltration Rate"
     },
+    "benign_attempts_count": {
+      "default": 0,
+      "title": "Benign Attempts Count",
+      "type": "integer"
+    },
+    "valid_benign_attempts": {
+      "default": 0,
+      "title": "Valid Benign Attempts",
+      "type": "integer"
+    },
     "fpr": {
       "anyOf": [
         {
@@ -132,6 +142,66 @@
       ],
       "default": null,
       "title": "Fpr"
+    },
+    "benign_task_completion_rate": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Benign Task Completion Rate"
+    },
+    "benign_restriction_rate": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Benign Restriction Rate"
+    },
+    "inappropriate_block_rate": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Inappropriate Block Rate"
+    },
+    "inappropriate_quarantine_rate": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Inappropriate Quarantine Rate"
+    },
+    "utility_loss": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Utility Loss"
     },
     "latency_p50_ms": {
       "default": 0.0,

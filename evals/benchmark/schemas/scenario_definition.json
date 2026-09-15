@@ -68,8 +68,22 @@
       "title": "AttackObjectiveType",
       "type": "string"
     },
+    "BenignOutcome": {
+      "description": "Intervention and utility outcome taxonomy for benign workloads.",
+      "enum": [
+        "NO_INTERVENTION",
+        "RESTRICTED_BUT_SUCCESSFUL",
+        "INAPPROPRIATE_BLOCK",
+        "INAPPROPRIATE_QUARANTINE",
+        "TASK_SUCCESS",
+        "TASK_FAILURE",
+        "INCONCLUSIVE"
+      ],
+      "title": "BenignOutcome",
+      "type": "string"
+    },
     "ExpectedOutcome": {
-      "description": "Expected security outcomes for baseline vs. Aegis.",
+      "description": "Expected security and utility outcomes for baseline vs. Aegis.",
       "properties": {
         "baseline_expected_outcome": {
           "$ref": "#/$defs/SecurityOutcome",
@@ -78,6 +92,28 @@
         "aegis_expected_outcome": {
           "$ref": "#/$defs/SecurityOutcome",
           "default": "BLOCKED"
+        },
+        "baseline_expected_benign_outcome": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BenignOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "aegis_expected_benign_outcome": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BenignOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "baseline_objective_achieved": {
           "default": true,
@@ -103,7 +139,7 @@
       "type": "string"
     },
     "SecurityOutcome": {
-      "description": "Final security outcome of a VALID attempt.\n\nNOTE: If AttemptValidity != VALID (e.g. ERROR, INCONCLUSIVE, INVALID),\nSecurityOutcome MUST strictly be NOT_APPLICABLE.",
+      "description": "Final security outcome of a VALID adversarial attempt.\n\nNOTE: If AttemptValidity != VALID (e.g. ERROR, INCONCLUSIVE, INVALID)\nOR if the attempt is benign, SecurityOutcome MUST strictly be\nNOT_APPLICABLE.",
       "enum": [
         "NOT_APPLICABLE",
         "DETECTED",
