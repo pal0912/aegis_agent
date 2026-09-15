@@ -10,7 +10,7 @@ import inspect
 import json
 import logging
 import re
-from typing import Any, Callable, Dict, Optional, Type
+from typing import Any, Callable, Dict, List, Optional, Type
 
 from langchain_core.tools import BaseTool
 from pydantic import ConfigDict, Field
