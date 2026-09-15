@@ -75,3 +75,6 @@ htmlcov/
 *.swo
 .DS_Store
 Thumbs.db
+
+# Benchmark Output Artifacts
+results/
