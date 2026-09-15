@@ -5,6 +5,7 @@ Implements ephemeral/persistent agent cryptographic identities, task-scoped dele
 """
 
 import base64
+import collections
 import json
 import logging
 import threading
@@ -50,7 +51,7 @@ class AgentIdentityManager:
         self._lock = threading.RLock()
         self._private_keys: Dict[str, ed25519.Ed25519PrivateKey] = {}
         self._identities: Dict[str, AgentIdentity] = {}
-        self._revoked_tokens: Set[str] = set()
+        self._revoked_tokens: collections.OrderedDict[str, float] = collections.OrderedDict()
 
     def register_agent(
         self,
@@ -166,17 +167,43 @@ class AgentIdentityManager:
             return f"{claims_b64}.{sig_b64}"
 
     def revoke_token(self, jti: str) -> None:
-        """Revoke a delegation token by its unique JTI."""
+        """Revoke a delegation token by its unique JTI using deterministic FIFO eviction."""
         with self._lock:
             if len(self._revoked_tokens) >= 50000:
-                # Evict oldest entry from set
-                self._revoked_tokens.pop()
-            self._revoked_tokens.add(jti)
+                # Deterministically evict oldest entry from OrderedDict
+                self._revoked_tokens.popitem(last=False)
+            self._revoked_tokens[jti] = time.time()
 
     def is_token_revoked(self, jti: str) -> bool:
         """Check if a token JTI is in the revocation list."""
         with self._lock:
             return jti in self._revoked_tokens
+
+    def rotate_agent_key(self, agent_id: str) -> AgentIdentity:
+        """Atomically generate a new Ed25519 keypair for an agent, invalidating prior delegation tokens."""
+        with self._lock:
+            old_identity = self._identities.get(agent_id)
+            if not old_identity:
+                raise ValueError(f"Cannot rotate key: Agent '{agent_id}' is not registered.")
+
+            new_private_key = ed25519.Ed25519PrivateKey.generate()
+            new_public_key = new_private_key.public_key()
+            new_pub_pem = new_public_key.public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
+            ).decode("utf-8")
+
+            new_identity = AgentIdentity(
+                agent_id=agent_id,
+                public_key_pem=new_pub_pem,
+                assigned_capabilities=set(old_identity.assigned_capabilities),
+                delegation_depth_limit=old_identity.delegation_depth_limit,
+            )
+
+            self._private_keys[agent_id] = new_private_key
+            self._identities[agent_id] = new_identity
+            logger.info("Rotated cryptographic keypair for AgentIdentity: '%s'", agent_id)
+            return new_identity
 
     def verify_delegation_token(
         self, token_str: str, required_capability: Capability

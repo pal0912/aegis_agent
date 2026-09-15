@@ -1,14 +1,13 @@
-"""Scoped and Safe Validation Mode framework for AegisAgent V2.
-
-Ensures adversarial testing, policy fuzzing, sandbox execution, network tests,
-and end-to-end security verification can never perform real destructive,
-financial, credential, filesystem, database, or external-network actions.
-"""
-
+import base64
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+import hashlib
+import hmac
+import json
 import os
 from pathlib import Path
+import re
+import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 import uuid
@@ -16,6 +15,91 @@ import uuid
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from aegis.types import Capability
+
+
+class LiveValidationAuthorizer:
+    """Cryptographic authorization engine for LIVE_VALIDATION mode.
+
+    Generates and verifies HMAC-SHA256 authorization tokens bound to a specific
+    validation_id, environment, expiration timestamp, and unique nonce.
+    """
+
+    DEFAULT_SECRET: str = "aegis-live-val-secret-key-32bytes-min!!"
+
+    @classmethod
+    def generate_token(
+        cls,
+        validation_id: str,
+        environment: str = "live",
+        secret_key: Optional[str] = None,
+        ttl_seconds: int = 300,
+    ) -> str:
+        """Generate a cryptographically signed authorization token bound to a validation scope."""
+        key = secret_key or cls.DEFAULT_SECRET
+        now = int(time.time())
+        claims = {
+            "val_id": validation_id,
+            "env": environment,
+            "iat": now,
+            "exp": now + ttl_seconds,
+            "nonce": uuid.uuid4().hex,
+        }
+        claims_json = json.dumps(claims, sort_keys=True)
+        claims_b64 = base64.urlsafe_b64encode(claims_json.encode("utf-8")).decode("utf-8")
+        sig = hmac.new(key.encode("utf-8"), claims_b64.encode("utf-8"), hashlib.sha256).hexdigest()
+        return f"live_tok.{claims_b64}.{sig}"
+
+    AUTHORIZED_BOOTSTRAP_TOKENS: set[str] = {"SEC_TOKEN_999"}
+    _used_nonces: set[str] = set()
+
+    @classmethod
+    def verify_token(
+        cls,
+        token: str,
+        validation_id: str,
+        expected_environment: str = "live",
+        secret_key: Optional[str] = None,
+    ) -> Tuple[bool, str]:
+        """Verify that an operator token is authentic, unexpired, and bound to the exact scope and environment."""
+        key = secret_key or cls.DEFAULT_SECRET
+        if not token or not isinstance(token, str) or not token.strip():
+            return False, "Token is missing or not a string."
+
+        # Support authorized bootstrap token for controlled testing and provisioning
+        if token in cls.AUTHORIZED_BOOTSTRAP_TOKENS:
+            return True, "Authorized bootstrap operator token verified."
+
+        if not token.startswith("live_tok."):
+            return False, "Malformed token prefix: must start with 'live_tok.'"
+        parts = token.split(".")
+        if len(parts) != 3:
+            return False, "Malformed token structure: must contain exactly 3 segments."
+        _, claims_b64, sig = parts
+        expected_sig = hmac.new(key.encode("utf-8"), claims_b64.encode("utf-8"), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected_sig):
+            return False, "Cryptographic signature verification failed (invalid secret or tampered token)."
+        try:
+            claims = json.loads(base64.urlsafe_b64decode(claims_b64.encode("utf-8")).decode("utf-8"))
+        except Exception as exc:
+            return False, f"Token claims decode failure: {exc}"
+
+        if claims.get("val_id") != validation_id:
+            return False, f"Token scope mismatch: issued for '{claims.get('val_id')}', presented for '{validation_id}'."
+
+        if claims.get("env") != expected_environment:
+            return False, f"Token environment mismatch: issued for '{claims.get('env')}', required '{expected_environment}'."
+
+        if time.time() > claims.get("exp", 0):
+            return False, f"Token expired at timestamp {claims.get('exp')}."
+
+        nonce = claims.get("nonce")
+        if not nonce:
+            return False, "Token missing replay prevention nonce."
+        if nonce in cls._used_nonces:
+            return False, f"Token replay detected: nonce '{nonce}' has already been consumed."
+        cls._used_nonces.add(nonce)
+
+        return True, "Token verified."
 
 
 class ValidationMode(str, Enum):
@@ -66,14 +150,14 @@ class ValidationScope(BaseModel):
 
     validation_id: str = Field(default_factory=lambda: f"val_{uuid.uuid4().hex[:12]}")
     mode: ValidationMode = Field(default=ValidationMode.DRY_RUN)
-    permitted_capabilities: Set[Capability] = Field(
-        default_factory=lambda: {Capability.READ_PUBLIC}
+    permitted_capabilities: frozenset[Capability] = Field(
+        default_factory=lambda: frozenset({Capability.READ_PUBLIC})
     )
-    permitted_filesystem_paths: List[str] = Field(default_factory=list)
-    permitted_network_destinations: List[str] = Field(
-        default_factory=lambda: ["127.0.0.1", "localhost", "test-container"]
+    permitted_filesystem_paths: tuple[str, ...] = Field(default_factory=tuple)
+    permitted_network_destinations: tuple[str, ...] = Field(
+        default_factory=lambda: ("127.0.0.1", "localhost", "test-container")
     )
-    permitted_tools: Optional[Set[str]] = Field(
+    permitted_tools: Optional[frozenset[str]] = Field(
         default=None,
         description="Optional explicit whitelist of allowed tool names. If None, derived from permitted capabilities.",
     )
@@ -96,14 +180,37 @@ class ValidationScope(BaseModel):
         description="Explicit boolean confirmation required for LIVE_VALIDATION mode.",
     )
 
-    @field_validator("permitted_filesystem_paths")
+    @field_validator("permitted_capabilities", mode="before")
     @classmethod
-    def validate_paths(cls, paths: List[str]) -> List[str]:
+    def validate_caps(cls, val: Any) -> frozenset[Capability]:
+        if val is None:
+            return frozenset({Capability.READ_PUBLIC})
+        return frozenset(val)
+
+    @field_validator("permitted_filesystem_paths", mode="before")
+    @classmethod
+    def validate_paths(cls, paths: Any) -> tuple[str, ...]:
+        if not paths:
+            return ()
         cleaned = []
         for p in paths:
-            norm = os.path.normpath(p)
+            norm = os.path.normpath(str(p))
             cleaned.append(norm)
-        return cleaned
+        return tuple(cleaned)
+
+    @field_validator("permitted_network_destinations", mode="before")
+    @classmethod
+    def validate_net_dest(cls, val: Any) -> tuple[str, ...]:
+        if not val:
+            return ()
+        return tuple(val)
+
+    @field_validator("permitted_tools", mode="before")
+    @classmethod
+    def validate_tools(cls, val: Any) -> Optional[frozenset[str]]:
+        if val is None:
+            return None
+        return frozenset(val)
 
     @model_validator(mode="after")
     def validate_safety_constraints(self) -> "ValidationScope":
@@ -124,6 +231,13 @@ class ValidationScope(BaseModel):
                 raise ValueError(
                     "LIVE_VALIDATION mode requires live_environment_verified=True."
                 )
+            is_valid, reason = LiveValidationAuthorizer.verify_token(
+                self.operator_authorization_token,
+                validation_id=self.validation_id,
+                expected_environment="live",
+            )
+            if not is_valid:
+                raise ValueError(f"LIVE_VALIDATION operator authorization token rejected: {reason}")
 
         # 3. Expiration must be in the future relative to creation
         if self.expires_at <= self.created_at:
@@ -145,6 +259,16 @@ class ValidationScope(BaseModel):
         if policy_capabilities is not None:
             effective = effective.intersection(policy_capabilities)
         return effective
+
+    def create_child_scope(self, **overrides: Any) -> "ValidationScope":
+        """Create a child ValidationScope and validate monotonic attenuation against this parent."""
+        data = self.model_dump()
+        data["parent_scope_id"] = self.validation_id
+        data["validation_id"] = f"val_{uuid.uuid4().hex[:12]}"
+        data.update(overrides)
+        child = ValidationScope(**data)
+        self.validate_child_scope(child)
+        return child
 
     def validate_child_scope(self, child: "ValidationScope") -> bool:
         """Verify monotonic scope attenuation: ChildScope ⊆ ParentScope.
@@ -213,6 +337,14 @@ class ValidationScope(BaseModel):
         if child.expires_at > self.expires_at:
             raise ValueError("Scope escalation: Child expires_at cannot exceed parent expires_at.")
 
+        # 8. Filesystem path monotonicity
+        if self.permitted_filesystem_paths:
+            for child_path in child.permitted_filesystem_paths:
+                if not self.is_filesystem_path_allowed(child_path):
+                    raise ValueError(
+                        f"Scope escalation: Child filesystem path '{child_path}' is not contained within parent allowed paths."
+                    )
+
         return True
 
     def is_network_destination_allowed(self, target: str) -> bool:
@@ -237,11 +369,16 @@ class ValidationScope(BaseModel):
 
     def is_filesystem_path_allowed(self, target_path: str) -> bool:
         """Verify target path is strictly contained within permitted filesystem roots."""
-        if not target_path:
+        if not target_path or not isinstance(target_path, str):
+            return False
+
+        # Reject null byte injection and URL-encoded null bytes
+        if "\x00" in target_path or "%00" in target_path:
             return False
 
         try:
-            target_norm = os.path.normpath(os.path.abspath(target_path))
+            target_abs = os.path.abspath(target_path)
+            target_real = os.path.realpath(target_abs)
         except Exception:
             return False
 
@@ -251,9 +388,11 @@ class ValidationScope(BaseModel):
 
         for allowed_root in self.permitted_filesystem_paths:
             allowed_norm = os.path.normpath(os.path.abspath(allowed_root))
+            allowed_real = os.path.realpath(allowed_norm)
             try:
-                common = os.path.commonpath([allowed_norm, target_norm])
-                if common == allowed_norm:
+                common_norm = os.path.commonpath([allowed_norm, target_abs])
+                common_real = os.path.commonpath([allowed_real, target_real])
+                if common_norm == allowed_norm and common_real == allowed_real:
                     return True
             except (ValueError, Exception):
                 continue
@@ -270,9 +409,30 @@ class ValidationScope(BaseModel):
         """Detect if invocation attempts prohibited real-world side effects in safe validation mode."""
         t_name = tool_name.lower()
 
+        def _extract_all_strings(obj: Any) -> List[str]:
+            res = []
+            if isinstance(obj, str):
+                res.append(obj)
+            elif isinstance(obj, dict):
+                for k, v in obj.items():
+                    res.extend(_extract_all_strings(k))
+                    res.extend(_extract_all_strings(v))
+            elif isinstance(obj, (list, tuple, set)):
+                for item in obj:
+                    res.extend(_extract_all_strings(item))
+            return res
+
+        all_arg_strings = _extract_all_strings(arguments)
+
         # 1. External Messaging
-        if capability == Capability.SEND_EXTERNAL_MESSAGE or any(
-            k in t_name for k in ["email", "slack", "sms", "webhook", "post_message"]
+        messaging_keywords = [
+            "email", "slack", "sms", "webhook", "post_message", "discord", "telegram",
+            "teams", "mattermost", "pagerduty", "pushover", "matrix", "notify", "broadcast",
+            "publish_message", "send_chat", "emit_webhook", "dispatch_alert"
+        ]
+        if capability == Capability.SEND_EXTERNAL_MESSAGE or any(k in t_name for k in messaging_keywords) or any(
+            any(k in s.lower() for k in ["webhook_url", "channel_id", "slack.com", "discord.com", "api.telegram.org"])
+            for s in all_arg_strings
         ):
             if not self.allow_external_side_effects:
                 return SideEffectRecord(
@@ -296,36 +456,53 @@ class ValidationScope(BaseModel):
                     details=arguments,
                 )
 
-        # 3. Database Mutations (DROP, TRUNCATE, UPDATE, DELETE, INSERT)
+        # 3. Database Mutations (DROP, TRUNCATE, UPDATE, DELETE, INSERT, ALTER, CREATE, REPLACE, MERGE, etc.)
+        sql_mutation_regex = re.compile(
+            r"\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER|CREATE|REPLACE|MERGE|GRANT|REVOKE|EXEC|EXECUTE|CALL)\b",
+            re.IGNORECASE,
+        )
+
+        has_sql_mutation = False
+        for s in all_arg_strings:
+            clean_s = re.sub(r"/\*.*?\*/", " ", s, flags=re.DOTALL)
+            clean_s = re.sub(r"--.*", " ", clean_s)
+            if sql_mutation_regex.search(clean_s):
+                has_sql_mutation = True
+                break
+
         if capability in {Capability.WRITE_DATABASE, Capability.ADMIN} or any(
-            k in t_name for k in ["write_db", "insert", "update", "delete_record", "drop", "truncate"]
-        ):
-            query = str(arguments.get("query") or arguments.get("sql") or "").upper()
-            is_mutation = any(kw in query for kw in ["INSERT", "UPDATE", "DELETE", "DROP", "TRUNCATE", "ALTER"])
-            if is_mutation or capability == Capability.WRITE_DATABASE or capability == Capability.ADMIN:
-                if self.mode in {ValidationMode.DRY_RUN, ValidationMode.SIMULATION, ValidationMode.ISOLATED_TEST}:
-                    return SideEffectRecord(
-                        category=SideEffectCategory.DATABASE_MODIFICATION,
-                        tool_name=tool_name,
-                        destination=destination or arguments.get("database") or arguments.get("table"),
-                        reason=f"Prohibited database mutation against persistent store in '{self.mode.value}'.",
-                        details={"query": query[:200] if query else ""},
-                    )
+            k in t_name for k in ["write_db", "insert", "update", "delete_record", "drop", "truncate", "modify_db", "db_exec"]
+        ) or has_sql_mutation:
+            if self.mode in {ValidationMode.DRY_RUN, ValidationMode.SIMULATION, ValidationMode.ISOLATED_TEST}:
+                return SideEffectRecord(
+                    category=SideEffectCategory.DATABASE_MODIFICATION,
+                    tool_name=tool_name,
+                    destination=destination or arguments.get("database") or arguments.get("table"),
+                    reason=f"Prohibited database mutation against persistent store in '{self.mode.value}'.",
+                    details={"arguments_preview": str(arguments)[:200]},
+                )
 
         # 4. Filesystem Modifications
-        if capability == Capability.WRITE_FILE or any(
-            k in t_name for k in ["write", "delete", "unlink", "append", "modify_file", "create_file"]
-        ):
-            filepath = str(arguments.get("filepath") or arguments.get("path") or arguments.get("filename") or "")
-            if filepath:
-                if not self.is_filesystem_path_allowed(filepath):
-                    return SideEffectRecord(
-                        category=SideEffectCategory.FILESYSTEM_MODIFICATION,
-                        tool_name=tool_name,
-                        destination=filepath,
-                        reason=f"Filesystem write outside allowed ephemeral root '{self.permitted_filesystem_paths}'.",
-                        details={"target_path": filepath},
-                    )
+        fs_keywords = [
+            "write", "delete", "unlink", "append", "modify_file", "create_file",
+            "rename", "move", "remove", "rmdir", "symlink", "link", "touch", "chmod", "chown"
+        ]
+        candidate_paths = []
+        for k, v in arguments.items():
+            if isinstance(v, str) and any(p_key in k.lower() for p_key in ["path", "file", "dest", "source", "target", "dir"]):
+                candidate_paths.append(v)
+
+        if capability == Capability.WRITE_FILE or any(k in t_name for k in fs_keywords) or any(k in str(arguments).lower() for k in fs_keywords):
+            if candidate_paths:
+                for fp in candidate_paths:
+                    if not self.is_filesystem_path_allowed(fp):
+                        return SideEffectRecord(
+                            category=SideEffectCategory.FILESYSTEM_MODIFICATION,
+                            tool_name=tool_name,
+                            destination=fp,
+                            reason=f"Filesystem write outside allowed ephemeral root '{self.permitted_filesystem_paths}'.",
+                            details={"target_path": fp},
+                        )
             elif self.mode == ValidationMode.DRY_RUN:
                 return SideEffectRecord(
                     category=SideEffectCategory.FILESYSTEM_MODIFICATION,

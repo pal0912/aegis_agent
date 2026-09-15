@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from pydantic import BaseModel, Field, field_validator
@@ -128,6 +129,7 @@ network:
 
     def __init__(self, policy_path: Optional[str] = None) -> None:
         """Initialize policy engine and load either file or default policy."""
+        self._lock = threading.RLock()
         self._policy_path: Optional[str] = policy_path
         self._policy: DeclarativePolicySchema = self.load_policy_string(self.DEFAULT_POLICY_YAML)
         if policy_path and os.path.exists(policy_path):
@@ -141,10 +143,11 @@ network:
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        self._policy = self.load_policy_string(content)
-        self._policy_path = path
-        logger.info(f"DeclarativePolicyEngine: Successfully loaded policy file '{path}'")
-        return self._policy
+        with self._lock:
+            self._policy = self.load_policy_string(content)
+            self._policy_path = path
+            logger.info(f"DeclarativePolicyEngine: Successfully loaded policy file '{path}'")
+            return self._policy
 
     def load_policy_string(self, content: str) -> DeclarativePolicySchema:
         """Parse YAML/JSON content and validate against DeclarativePolicySchema."""
@@ -153,8 +156,14 @@ network:
             if not isinstance(raw_data, dict):
                 raise ValueError("Declarative policy content must parse to a dictionary root.")
             policy = DeclarativePolicySchema.model_validate(raw_data)
-            self._policy = policy
-            self._snapshot_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            lock = getattr(self, "_lock", None)
+            if lock:
+                with lock:
+                    self._policy = policy
+                    self._snapshot_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            else:
+                self._policy = policy
+                self._snapshot_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
             return policy
         except Exception as exc:
             logger.error(f"DeclarativePolicyEngine parsing error: {exc}")
@@ -163,12 +172,28 @@ network:
     @property
     def snapshot_hash(self) -> str:
         """Cryptographic SHA-256 digest of active policy schema."""
+        lock = getattr(self, "_lock", None)
+        if lock:
+            with lock:
+                return getattr(self, "_snapshot_hash", "")
         return getattr(self, "_snapshot_hash", "")
 
     @property
     def version(self) -> str:
         """Active policy version string."""
+        lock = getattr(self, "_lock", None)
+        if lock:
+            with lock:
+                return self._policy.version
         return self._policy.version
+
+    def get_snapshot(self) -> Tuple[DeclarativePolicySchema, str, str]:
+        """Atomically return an immutable tuple of (policy_schema, version, snapshot_hash)."""
+        lock = getattr(self, "_lock", None)
+        if lock:
+            with lock:
+                return self._policy, self._policy.version, getattr(self, "_snapshot_hash", "")
+        return self._policy, self._policy.version, getattr(self, "_snapshot_hash", "")
 
     def reload(self) -> DeclarativePolicySchema:
         """Hot-reload policy from disk without restarting the host process."""

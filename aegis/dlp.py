@@ -4,9 +4,11 @@ Detects API keys, cryptographic credentials, authentication tokens, and PII
 in memory before tool invocation and obfuscates them in audit logs.
 """
 
+import base64
 import hashlib
 import logging
 import re
+import urllib.parse
 from typing import Any, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
@@ -110,6 +112,31 @@ class DataLossPreventionEngine:
             if pattern.search(text):
                 violations.append(label)
 
+        # 1b. Scan URL-encoded strings
+        if "%" in text:
+            try:
+                unquoted = urllib.parse.unquote(text)
+                if unquoted != text:
+                    for label, pattern in self.SECRET_PATTERNS:
+                        if pattern.search(unquoted) and label not in violations:
+                            violations.append(f"{label} (URL Encoded)")
+            except Exception:
+                pass
+
+        # 1c. Scan Base64-encoded credential payloads
+        b64_candidate_regex = re.compile(r"\b[A-Za-z0-9+/]{20,}={0,2}\b")
+        for match in b64_candidate_regex.finditer(text):
+            candidate = match.group(0)
+            try:
+                decoded_bytes = base64.b64decode(candidate)
+                decoded_str = decoded_bytes.decode("utf-8", errors="ignore")
+                if len(decoded_str) >= 16:
+                    for label, pattern in self.SECRET_PATTERNS:
+                        if pattern.search(decoded_str) and label not in violations:
+                            violations.append(f"{label} (Base64 Encoded)")
+            except Exception:
+                pass
+
         # 2. Scan for Credit Cards with Luhn Check
         for match in self.CREDIT_CARD_CANDIDATE.finditer(text):
             candidate = match.group(0)
@@ -170,6 +197,23 @@ class DataLossPreventionEngine:
                     return f"[REDACTED_{clean_label}:{self._hash_val(m.group(0))}]"
                 redacted = pattern.sub(pii_repl, redacted)
 
+        # 4. Redact Base64 encoded secrets
+        b64_candidate_regex = re.compile(r"\b[A-Za-z0-9+/]{20,}={0,2}\b")
+        def b64_repl(m: re.Match) -> str:
+            cand = m.group(0)
+            try:
+                dec_bytes = base64.b64decode(cand)
+                dec_str = dec_bytes.decode("utf-8", errors="ignore")
+                if len(dec_str) >= 16:
+                    for label, pattern in self.SECRET_PATTERNS:
+                        if pattern.search(dec_str):
+                            return f"[REDACTED_BASE64_SECRET:{self._hash_val(cand)}]"
+            except Exception:
+                pass
+            return cand
+
+        redacted = b64_candidate_regex.sub(b64_repl, redacted)
+
         return redacted
 
     def sanitize_tool_args(self, args: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
@@ -198,5 +242,28 @@ class DataLossPreventionEngine:
             return val
 
         sanitized = _traverse(args) if args else {}
+
+        # Cross-parameter split/fragmented secret inspection
+        def _extract_all_strings(val: Any) -> List[str]:
+            items: List[str] = []
+            if isinstance(val, str):
+                items.append(val)
+            elif isinstance(val, dict):
+                for v in val.values():
+                    items.extend(_extract_all_strings(v))
+            elif isinstance(val, (list, tuple)):
+                for v in val:
+                    items.extend(_extract_all_strings(v))
+            return items
+
+        all_str_vals = _extract_all_strings(args)
+        if len(all_str_vals) > 1:
+            concat_str = "".join(all_str_vals)
+            concat_v = self.scan_text(concat_str)
+            for cv in concat_v:
+                clean_cv = cv.split(" (")[0]
+                if not any(clean_cv in ex for ex in all_violations):
+                    all_violations.append(f"{clean_cv} (Fragmented Across Parameters)")
+
         unique_violations = sorted(set(all_violations))
         return sanitized, unique_violations

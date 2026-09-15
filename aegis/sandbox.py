@@ -65,6 +65,18 @@ class IsolatedCodeSandbox:
         "_multiprocessing",
         "_socket",
         "_ssl",
+        "pickle",
+        "_pickle",
+        "shelve",
+        "marshal",
+        "dill",
+        "webbrowser",
+        "ftplib",
+        "smtplib",
+        "telnetlib",
+        "poplib",
+        "imaplib",
+        "ssl",
     }
 
     # Banned functions, builtins, and attribute accesses

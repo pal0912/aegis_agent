@@ -1,3 +1,4 @@
+import collections
 import hashlib
 import logging
 import time
@@ -50,7 +51,7 @@ class InterAgentChannelGuard:
         """Initialize channel guard with identity keystore, context sanitizer, and anti-replay cache."""
         self.identity_manager = identity_manager or AgentIdentityManager()
         self.sanitizer = sanitizer or ContextSanitizer()
-        self._processed_message_ids: Set[str] = set()
+        self._processed_message_ids: collections.OrderedDict[str, float] = collections.OrderedDict()
 
     def build_canonical_payload(
         self,
@@ -105,6 +106,7 @@ class InterAgentChannelGuard:
         self,
         message: InterAgentMessage,
         required_capability: Optional[Capability] = None,
+        parent_session: Optional[SessionContext] = None,
     ) -> Tuple[bool, str, SessionContext]:
         """Verify message signature, anti-replay nonce, delegation token, sanitize payload, and propagate taint."""
         # 1. Verify Ed25519 message signature (trying canonical payload with nonce and fallback)
@@ -135,7 +137,7 @@ class InterAgentChannelGuard:
             )
             tainted_ctx = SessionContext(
                 session_id=f"session-{message.receiver_id}",
-                root_intent=message.payload,
+                root_intent=parent_session.user_root_intent if parent_session else message.payload,
                 is_tainted=True,
                 trust_level="UNTRUSTED",
             )
@@ -148,18 +150,18 @@ class InterAgentChannelGuard:
             )
             tainted_ctx = SessionContext(
                 session_id=f"session-{message.receiver_id}",
-                root_intent=message.payload,
+                root_intent=parent_session.user_root_intent if parent_session else message.payload,
                 is_tainted=True,
                 trust_level="UNTRUSTED",
             )
             return False, f"REPLAY_ATTACK_DETECTED: Message '{message.message_id}' already consumed", tainted_ctx
 
-        # Record message_id in processed anti-replay set
+        # Record message_id in processed anti-replay FIFO cache
         if len(self._processed_message_ids) >= self.MAX_TRACKED_NONCES:
-            self._processed_message_ids.pop()
-        self._processed_message_ids.add(message.message_id)
+            self._processed_message_ids.popitem(last=False)
+        self._processed_message_ids[message.message_id] = time.time()
 
-        # 2. Verify delegation token if required or present
+        # 3. Verify delegation token if required or present
         if required_capability is not None or message.delegation_token:
             if not message.delegation_token:
                 logger.warning(
@@ -167,7 +169,7 @@ class InterAgentChannelGuard:
                 )
                 tainted_ctx = SessionContext(
                     session_id=f"session-{message.receiver_id}",
-                    root_intent=message.payload,
+                    root_intent=parent_session.user_root_intent if parent_session else message.payload,
                     is_tainted=True,
                     trust_level="UNTRUSTED",
                 )
@@ -183,24 +185,25 @@ class InterAgentChannelGuard:
                     )
                     tainted_ctx = SessionContext(
                         session_id=f"session-{message.receiver_id}",
-                        root_intent=message.payload,
+                        root_intent=parent_session.user_root_intent if parent_session else message.payload,
                         is_tainted=True,
                         trust_level="UNTRUSTED",
                     )
                     return False, f"DELEGATION_TOKEN_INVALID: {reason}", tainted_ctx
 
-        # 3. Context Sanitization (neutralize boundary breakout markers)
+        # 4. Context Sanitization (neutralize boundary breakout markers)
         sanitized_payload = self.sanitizer.escape_boundary_breakouts(message.payload)
 
-        # 4. Taint Propagation: Inherit taint status directly from message context
+        # 5. Taint Propagation: Inherit taint status directly from message context and parent
+        combined_taint = message.taint_context or (parent_session.is_session_tainted() if parent_session else False)
         receiver_session = SessionContext(
             session_id=f"session-{message.receiver_id}",
-            root_intent=sanitized_payload,
-            is_tainted=message.taint_context,
-            trust_level="UNTRUSTED" if message.taint_context else "TRUSTED",
+            user_root_intent=parent_session.user_root_intent if parent_session else sanitized_payload,
+            is_tainted=combined_taint,
+            trust_level="UNTRUSTED" if combined_taint else "TRUSTED",
         )
 
         logger.info(
-            f"InterAgentChannelGuard: Message ingested safely from '{message.sender_id}' to '{message.receiver_id}' (Taint: {message.taint_context})"
+            f"InterAgentChannelGuard: Message ingested safely from '{message.sender_id}' to '{message.receiver_id}' (Taint: {combined_taint})"
         )
         return True, "INGEST_SUCCESS", receiver_session

@@ -347,8 +347,34 @@ class MCPSecurityGuard:
 
             # Database writes
             if not restriction_policy.allow_database_writes:
-                if inferred_cap in {Capability.WRITE_DATABASE, Capability.ADMIN} or any(
-                    w in str_args for w in ["insert ", "update ", "delete ", "drop ", "truncate "]
+                sql_mutation_regex = re.compile(
+                    r"\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER|CREATE|REPLACE|MERGE|GRANT|REVOKE|EXEC|EXECUTE|CALL)\b",
+                    re.IGNORECASE,
+                )
+                def _extract_all_strings(val: Any) -> List[str]:
+                    items: List[str] = []
+                    if isinstance(val, str):
+                        items.append(val)
+                    elif isinstance(val, dict):
+                        for k, v in val.items():
+                            items.extend(_extract_all_strings(k))
+                            items.extend(_extract_all_strings(v))
+                    elif isinstance(val, (list, tuple, set)):
+                        for item in val:
+                            items.extend(_extract_all_strings(item))
+                    return items
+
+                all_arg_strings = _extract_all_strings(sanitized_args)
+                has_db_mutation = False
+                for s in all_arg_strings:
+                    clean_s = re.sub(r"/\*.*?\*/", " ", s, flags=re.DOTALL)
+                    clean_s = re.sub(r"--.*", " ", clean_s)
+                    if sql_mutation_regex.search(clean_s):
+                        has_db_mutation = True
+                        break
+
+                if inferred_cap in {Capability.WRITE_DATABASE, Capability.ADMIN} or has_db_mutation or any(
+                    k in tool_name.lower() for k in ["write_db", "insert", "update", "delete", "drop", "truncate", "modify_db", "db_exec"]
                 ):
                     reason = "MCP Restriction Violation: Database writes prohibited under restriction policy."
                     logger.error(reason)
@@ -366,9 +392,19 @@ class MCPSecurityGuard:
 
             # External messaging
             if not restriction_policy.allow_external_messaging:
+                messaging_keywords = [
+                    "email", "slack", "sms", "webhook", "post_message", "discord", "telegram",
+                    "teams", "mattermost", "pagerduty", "pushover", "matrix", "notify", "broadcast",
+                    "publish_message", "send_chat", "emit_webhook", "dispatch_alert", "mail"
+                ]
+                all_strs = [s.lower() for s in _extract_all_strings(sanitized_args)]
+                has_msg_dest = any(
+                    any(k in s for k in ["webhook_url", "channel_id", "slack.com", "discord.com", "api.telegram.org"])
+                    for s in all_strs
+                )
                 if inferred_cap == Capability.SEND_EXTERNAL_MESSAGE or any(
-                    k in tool_name.lower() for k in ["email", "slack", "sms", "webhook", "mail"]
-                ):
+                    k in tool_name.lower() for k in messaging_keywords
+                ) or has_msg_dest:
                     reason = "MCP Restriction Violation: External messaging prohibited under restriction policy."
                     logger.error(reason)
                     self._record_mcp_audit(

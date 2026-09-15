@@ -274,3 +274,62 @@ class OutboundNetworkGuard:
             )
 
         return True, "Request parameters permitted."
+
+    def validate_redirect_hop(self, source_url: str, redirect_target: str) -> Tuple[bool, str, str]:
+        """Validate an HTTP redirect hop against SSRF policies, resolving relative URLs.
+
+        Args:
+            source_url: The original URL that returned a redirect response.
+            redirect_target: The Location header URL from the redirect response.
+
+        Returns:
+            Tuple of (is_valid: bool, reason: str, resolved_target_url: str).
+        """
+        if not redirect_target:
+            return False, "Empty redirect location header", ""
+
+        # Resolve relative URLs against source URL
+        resolved_url = urllib.parse.urljoin(source_url, redirect_target.strip())
+
+        is_valid, reason = self.validate_url(resolved_url)
+        if not is_valid:
+            return False, f"Redirect SSRF blocked: Destination '{resolved_url}' violates policy ({reason})", resolved_url
+
+        return True, "Redirect hop validated.", resolved_url
+
+    def safe_validate_redirect_chain(
+        self,
+        initial_url: str,
+        redirect_targets: list[str],
+        max_redirects: int = 5,
+    ) -> Tuple[bool, str, list[str]]:
+        """Validate a full chain of HTTP redirects sequentially.
+
+        Ensures every intermediate and final hop is validated against SSRF rules.
+
+        Args:
+            initial_url: Starting outbound URL.
+            redirect_targets: List of redirect targets in order of occurrence.
+            max_redirects: Maximum permitted redirect depth.
+
+        Returns:
+            Tuple of (is_valid: bool, reason: str, validated_chain: list[str]).
+        """
+        validated_chain: list[str] = [initial_url]
+
+        is_valid_initial, init_reason = self.validate_url(initial_url)
+        if not is_valid_initial:
+            return False, f"Initial URL blocked: {init_reason}", validated_chain
+
+        current_url = initial_url
+        for hop_index, target in enumerate(redirect_targets):
+            if hop_index >= max_redirects:
+                return False, f"Redirect chain exceeded maximum limit of {max_redirects} hops.", validated_chain
+
+            is_valid_hop, hop_reason, resolved_hop = self.validate_redirect_hop(current_url, target)
+            validated_chain.append(resolved_hop)
+            if not is_valid_hop:
+                return False, f"Redirect chain blocked at hop {hop_index + 1} -> {resolved_hop}: {hop_reason}", validated_chain
+            current_url = resolved_hop
+
+        return True, "Redirect chain validated successfully.", validated_chain

@@ -39,7 +39,7 @@ class SessionContext:
         """
         intent = user_root_intent if user_root_intent is not None else (root_intent or "")
         self.session_id: str = session_id or str(uuid.uuid4())
-        self.user_root_intent: str = intent
+        self._user_root_intent: str = intent
         self.is_tainted: bool = is_tainted
         self.role: Optional[str] = role
         self.field_lineage: Dict[str, FieldProvenance] = dict(field_lineage) if field_lineage else {}
@@ -85,6 +85,26 @@ class SessionContext:
                 )
             except Exception:
                 pass
+
+    @property
+    def user_root_intent(self) -> str:
+        """Root user intent string, strictly immutable after initialization."""
+        return getattr(self, "_user_root_intent", "")
+
+    @user_root_intent.setter
+    def user_root_intent(self, val: str) -> None:
+        if getattr(self, "_user_root_intent", None) is not None:
+            raise AttributeError("user_root_intent is strictly immutable and cannot be rewritten after initialization.")
+        self._user_root_intent = val
+
+    @property
+    def root_intent(self) -> str:
+        """Backward-compatible alias for user_root_intent."""
+        return self.user_root_intent
+
+    @root_intent.setter
+    def root_intent(self, val: str) -> None:
+        self.user_root_intent = val
 
     def record_field_provenance(self, provenance_map: Dict[str, FieldProvenance]) -> None:
         """Update field-level lineage records for the active session context."""

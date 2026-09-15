@@ -9,6 +9,7 @@ import functools
 import inspect
 import json
 import logging
+import re
 from typing import Any, Callable, Dict, Optional, Type
 
 from langchain_core.tools import BaseTool
@@ -272,11 +273,19 @@ class AegisToolWrapper(BaseTool):
             source_trace_id=self.session.session_id,
         )
 
-        decision = self.policy_gate.evaluate_tool_call(
-            session=self.session,
-            tool_proposal=proposal,
-            detector_scan=self.last_detector_scan,
-        )
+        try:
+            decision = self.policy_gate.evaluate_tool_call(
+                session=self.session,
+                tool_proposal=proposal,
+                detector_scan=self.last_detector_scan,
+            )
+        except Exception as exc:
+            logger.error("AegisToolWrapper policy evaluation failed with exception: %s -> FAIL_CLOSED", exc)
+            return f"[AEGIS POLICY GATE BLOCKED]: Policy evaluation error -> FAIL_CLOSED: {exc}"
+
+        if decision is None or not hasattr(decision, "verdict"):
+            logger.error("AegisToolWrapper received invalid/null decision -> FAIL_CLOSED")
+            return "[AEGIS POLICY GATE BLOCKED]: Malformed or null policy decision -> FAIL_CLOSED."
 
         # Audit log the policy decision
         if self.audit_logger is not None:
@@ -289,8 +298,8 @@ class AegisToolWrapper(BaseTool):
                 raw_content_sha256=AuditEvent.hash_payload(raw_payload),
                 scan_result=self.last_detector_scan,
                 policy_decision=decision,
-                policy_version=decision.policy_version,
-                policy_snapshot_hash=decision.policy_snapshot_hash,
+                policy_version=getattr(decision, "policy_version", "2.0"),
+                policy_snapshot_hash=getattr(decision, "policy_snapshot_hash", None),
             )
             self.audit_logger.log_event(event)
 
@@ -351,11 +360,19 @@ class AegisToolWrapper(BaseTool):
             source_trace_id=self.session.session_id,
         )
 
-        decision = self.policy_gate.evaluate_tool_call(
-            session=self.session,
-            tool_proposal=proposal,
-            detector_scan=self.last_detector_scan,
-        )
+        try:
+            decision = self.policy_gate.evaluate_tool_call(
+                session=self.session,
+                tool_proposal=proposal,
+                detector_scan=self.last_detector_scan,
+            )
+        except Exception as exc:
+            logger.error("AegisToolWrapper async policy evaluation failed with exception: %s -> FAIL_CLOSED", exc)
+            return f"[AEGIS POLICY GATE BLOCKED]: Policy evaluation error -> FAIL_CLOSED: {exc}"
+
+        if decision is None or not hasattr(decision, "verdict"):
+            logger.error("AegisToolWrapper async received invalid/null decision -> FAIL_CLOSED")
+            return "[AEGIS POLICY GATE BLOCKED]: Malformed or null policy decision -> FAIL_CLOSED."
 
         if self.audit_logger is not None:
             raw_payload = json.dumps(
@@ -367,8 +384,8 @@ class AegisToolWrapper(BaseTool):
                 raw_content_sha256=AuditEvent.hash_payload(raw_payload),
                 scan_result=self.last_detector_scan,
                 policy_decision=decision,
-                policy_version=decision.policy_version,
-                policy_snapshot_hash=decision.policy_snapshot_hash,
+                policy_version=getattr(decision, "policy_version", "2.0"),
+                policy_snapshot_hash=getattr(decision, "policy_snapshot_hash", None),
             )
             self.audit_logger.log_event(event)
 
@@ -507,25 +524,65 @@ class AegisToolWrapper(BaseTool):
 
         str_args = str(args_dict).lower()
 
+        def _extract_all_strings(val: Any) -> List[str]:
+            items: List[str] = []
+            if isinstance(val, str):
+                items.append(val)
+            elif isinstance(val, dict):
+                for k, v in val.items():
+                    items.extend(_extract_all_strings(k))
+                    items.extend(_extract_all_strings(v))
+            elif isinstance(val, (list, tuple, set)):
+                for item in val:
+                    items.extend(_extract_all_strings(item))
+            return items
+
+        all_arg_strings = _extract_all_strings(args_dict)
+
         # Filesystem restrictions
         if restriction_policy.read_only_filesystem:
+            fs_keywords = [
+                "write", "delete", "unlink", "truncate", "overwrite", "append",
+                "rename", "remove", "rmdir", "symlink", "link", "touch", "chmod", "chown"
+            ]
             if inferred_cap in {Capability.WRITE_FILE, Capability.ADMIN} or any(
-                k in str_args for k in ["write", "delete", "unlink", "truncate", "overwrite", "append"]
-            ):
+                k in str_args for k in fs_keywords
+            ) or any(k in self.name.lower() for k in fs_keywords):
                 return "Filesystem mutations strictly prohibited under read-only restriction."
 
         # Database restrictions
         if not restriction_policy.allow_database_writes:
-            if inferred_cap in {Capability.WRITE_DATABASE, Capability.ADMIN} or any(
-                w in str_args for w in ["insert ", "update ", "delete ", "drop ", "truncate "]
+            sql_mutation_regex = re.compile(
+                r"\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER|CREATE|REPLACE|MERGE|GRANT|REVOKE|EXEC|EXECUTE|CALL)\b",
+                re.IGNORECASE,
+            )
+            has_db_mutation = False
+            for s in all_arg_strings:
+                clean_s = re.sub(r"/\*.*?\*/", " ", s, flags=re.DOTALL)
+                clean_s = re.sub(r"--.*", " ", clean_s)
+                if sql_mutation_regex.search(clean_s):
+                    has_db_mutation = True
+                    break
+
+            if inferred_cap in {Capability.WRITE_DATABASE, Capability.ADMIN} or has_db_mutation or any(
+                k in self.name.lower() for k in ["write_db", "insert", "update", "delete", "drop", "truncate", "modify_db", "db_exec"]
             ):
                 return "Database writes strictly prohibited under restriction policy."
 
         # External messaging restrictions
         if not restriction_policy.allow_external_messaging:
+            messaging_keywords = [
+                "email", "slack", "sms", "webhook", "post_message", "discord", "telegram",
+                "teams", "mattermost", "pagerduty", "pushover", "matrix", "notify", "broadcast",
+                "publish_message", "send_chat", "emit_webhook", "dispatch_alert", "mail"
+            ]
+            has_msg_dest = any(
+                any(k in s.lower() for k in ["webhook_url", "channel_id", "slack.com", "discord.com", "api.telegram.org"])
+                for s in all_arg_strings
+            )
             if inferred_cap == Capability.SEND_EXTERNAL_MESSAGE or any(
-                k in self.name.lower() for k in ["email", "slack", "sms", "webhook", "mail"]
-            ):
+                k in self.name.lower() for k in messaging_keywords
+            ) or has_msg_dest:
                 return "External messaging strictly prohibited under restriction policy."
 
         # Secret access restrictions
