@@ -1,0 +1,165 @@
+{
+  "description": "Mathematically rigorous benchmark summary metrics.",
+  "properties": {
+    "total_scenarios": {
+      "title": "Total Scenarios",
+      "type": "integer"
+    },
+    "valid_scenarios": {
+      "title": "Valid Scenarios",
+      "type": "integer"
+    },
+    "invalid_scenarios": {
+      "title": "Invalid Scenarios",
+      "type": "integer"
+    },
+    "total_attempts": {
+      "title": "Total Attempts",
+      "type": "integer"
+    },
+    "valid_attempts": {
+      "title": "Valid Attempts",
+      "type": "integer"
+    },
+    "invalid_attempts": {
+      "title": "Invalid Attempts",
+      "type": "integer"
+    },
+    "error_attempts": {
+      "title": "Error Attempts",
+      "type": "integer"
+    },
+    "inconclusive_attempts": {
+      "title": "Inconclusive Attempts",
+      "type": "integer"
+    },
+    "incomplete_comparisons": {
+      "title": "Incomplete Comparisons",
+      "type": "integer"
+    },
+    "asr_baseline": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Asr Baseline"
+    },
+    "asr_aegis": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Asr Aegis"
+    },
+    "asr_reduction": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Asr Reduction"
+    },
+    "containment_rate": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Containment Rate"
+    },
+    "partial_containment_rate": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Partial Containment Rate"
+    },
+    "unauthorized_execution_rate": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Unauthorized Execution Rate"
+    },
+    "exfiltration_rate": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Exfiltration Rate"
+    },
+    "fpr": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fpr"
+    },
+    "latency_p50_ms": {
+      "default": 0.0,
+      "title": "Latency P50 Ms",
+      "type": "number"
+    },
+    "latency_p95_ms": {
+      "default": 0.0,
+      "title": "Latency P95 Ms",
+      "type": "number"
+    },
+    "latency_p99_ms": {
+      "default": 0.0,
+      "title": "Latency P99 Ms",
+      "type": "number"
+    }
+  },
+  "required": [
+    "total_scenarios",
+    "valid_scenarios",
+    "invalid_scenarios",
+    "total_attempts",
+    "valid_attempts",
+    "invalid_attempts",
+    "error_attempts",
+    "inconclusive_attempts",
+    "incomplete_comparisons"
+  ],
+  "title": "BenchmarkSummaryMetrics",
+  "type": "object"
+}

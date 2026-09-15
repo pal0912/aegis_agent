@@ -1,0 +1,101 @@
+{
+  "description": "Reproducibility metadata recording exact environment and configuration.",
+  "properties": {
+    "benchmark_name": {
+      "default": "AegisAgent Security Benchmark",
+      "title": "Benchmark Name",
+      "type": "string"
+    },
+    "benchmark_contract_version": {
+      "default": "1.0",
+      "title": "Benchmark Contract Version",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "random_seed": {
+      "default": 42,
+      "title": "Random Seed",
+      "type": "integer"
+    },
+    "python_version": {
+      "title": "Python Version",
+      "type": "string"
+    },
+    "os_version": {
+      "title": "Os Version",
+      "type": "string"
+    },
+    "cpu_info": {
+      "title": "Cpu Info",
+      "type": "string"
+    },
+    "gpu_info": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Gpu Info"
+    },
+    "aegis_version": {
+      "title": "Aegis Version",
+      "type": "string"
+    },
+    "detector_version": {
+      "title": "Detector Version",
+      "type": "string"
+    },
+    "policy_version": {
+      "title": "Policy Version",
+      "type": "string"
+    },
+    "config_hash": {
+      "title": "Config Hash",
+      "type": "string"
+    },
+    "dataset_version": {
+      "title": "Dataset Version",
+      "type": "string"
+    },
+    "dataset_hash": {
+      "title": "Dataset Hash",
+      "type": "string"
+    },
+    "scenario_count": {
+      "title": "Scenario Count",
+      "type": "integer"
+    },
+    "validation_mode": {
+      "default": "DRY_RUN",
+      "title": "Validation Mode",
+      "type": "string"
+    },
+    "timestamp": {
+      "title": "Timestamp",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "python_version",
+    "os_version",
+    "cpu_info",
+    "aegis_version",
+    "detector_version",
+    "policy_version",
+    "config_hash",
+    "dataset_version",
+    "dataset_hash",
+    "scenario_count",
+    "timestamp"
+  ],
+  "title": "BenchmarkMetadata",
+  "type": "object"
+}

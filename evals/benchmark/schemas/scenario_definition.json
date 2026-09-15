@@ -1,0 +1,231 @@
+{
+  "$defs": {
+    "AttackObjective": {
+      "description": "Specification of the objective for an adversarial scenario.",
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/AttackObjectiveType"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "target_resource": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Resource"
+        },
+        "unauthorized_destination": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unauthorized Destination"
+        },
+        "required_sink_evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Required Sink Evidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "description"
+      ],
+      "title": "AttackObjective",
+      "type": "object"
+    },
+    "AttackObjectiveType": {
+      "description": "Standardized machine-readable attack objectives.",
+      "enum": [
+        "OBTAIN_SECRET",
+        "EXFILTRATE_SECRET",
+        "EXECUTE_UNAUTHORIZED_TOOL",
+        "WRITE_DATABASE",
+        "DELETE_FILE",
+        "SEND_EXTERNAL_MESSAGE",
+        "MODIFY_MEMORY",
+        "ESCALATE_CAPABILITY",
+        "ACCESS_PRIVATE_DATA",
+        "ACCESS_INTERNAL_NETWORK",
+        "MODIFY_POLICY",
+        "COMPROMISE_AGENT"
+      ],
+      "title": "AttackObjectiveType",
+      "type": "string"
+    },
+    "ExpectedOutcome": {
+      "description": "Expected security outcomes for baseline vs. Aegis.",
+      "properties": {
+        "baseline_expected_outcome": {
+          "$ref": "#/$defs/SecurityOutcome",
+          "default": "EXECUTED"
+        },
+        "aegis_expected_outcome": {
+          "$ref": "#/$defs/SecurityOutcome",
+          "default": "BLOCKED"
+        },
+        "baseline_objective_achieved": {
+          "default": true,
+          "title": "Baseline Objective Achieved",
+          "type": "boolean"
+        },
+        "aegis_objective_achieved": {
+          "default": false,
+          "title": "Aegis Objective Achieved",
+          "type": "boolean"
+        }
+      },
+      "title": "ExpectedOutcome",
+      "type": "object"
+    },
+    "ScenarioValidity": {
+      "description": "Validity of a benchmark scenario definition.",
+      "enum": [
+        "VALID",
+        "INVALID"
+      ],
+      "title": "ScenarioValidity",
+      "type": "string"
+    },
+    "SecurityOutcome": {
+      "description": "Final security outcome of a VALID attempt.\n\nNOTE: If AttemptValidity != VALID (e.g. ERROR, INCONCLUSIVE, INVALID),\nSecurityOutcome MUST strictly be NOT_APPLICABLE.",
+      "enum": [
+        "NOT_APPLICABLE",
+        "DETECTED",
+        "BLOCKED",
+        "CONTAINED",
+        "PARTIALLY_CONTAINED",
+        "EXECUTED",
+        "EXFILTRATED"
+      ],
+      "title": "SecurityOutcome",
+      "type": "string"
+    },
+    "ValidationScopeMode": {
+      "description": "Permitted validation modes for safe benchmark execution.",
+      "enum": [
+        "DRY_RUN",
+        "ISOLATED_TEST"
+      ],
+      "title": "ValidationScopeMode",
+      "type": "string"
+    }
+  },
+  "description": "Definition of a benchmark evaluation scenario.",
+  "properties": {
+    "scenario_id": {
+      "title": "Scenario Id",
+      "type": "string"
+    },
+    "scenario_validity": {
+      "$ref": "#/$defs/ScenarioValidity",
+      "default": "VALID"
+    },
+    "scenario_type": {
+      "default": "adversarial",
+      "title": "Scenario Type",
+      "type": "string"
+    },
+    "category": {
+      "title": "Category",
+      "type": "string"
+    },
+    "subcategory": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Subcategory"
+    },
+    "difficulty": {
+      "default": "MEDIUM",
+      "title": "Difficulty",
+      "type": "string"
+    },
+    "user_task": {
+      "title": "User Task",
+      "type": "string"
+    },
+    "external_context": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "External Context"
+    },
+    "attack_payload": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Attack Payload"
+    },
+    "attack_objective": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AttackObjective"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "expected": {
+      "$ref": "#/$defs/ExpectedOutcome"
+    },
+    "validation_mode": {
+      "$ref": "#/$defs/ValidationScopeMode",
+      "default": "DRY_RUN"
+    },
+    "severity": {
+      "default": "HIGH",
+      "title": "Severity",
+      "type": "string"
+    },
+    "invalidation_reasons": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Invalidation Reasons",
+      "type": "array"
+    }
+  },
+  "required": [
+    "scenario_id",
+    "category",
+    "user_task"
+  ],
+  "title": "ScenarioDefinition",
+  "type": "object"
+}
