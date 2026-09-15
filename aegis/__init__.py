@@ -29,7 +29,7 @@ from aegis.inter_agent import InterAgentChannelGuard, InterAgentMessage
 from aegis.ledger import CryptographicLedger
 from aegis.mcp_guard import MCPSecurityGuard
 from aegis.memory_guard import MemoryEntry, MemoryGuard
-from aegis.middleware import AegisToolWrapper, aegis_guard
+from aegis.middleware import AegisToolWrapper, DirectToolInvocationBlockedError, aegis_guard
 from aegis.multimodal import MultimodalGuard
 from aegis.network_guard import OutboundNetworkGuard
 from aegis.policy_gate import PolicyGate
@@ -106,6 +106,7 @@ __all__ = [
     "create_gateway_app",
     "aegis_guard",
     "AegisToolWrapper",
+    "DirectToolInvocationBlockedError",
     "AgentIdentity",
     "AgentIdentityManager",
     "InterAgentMessage",

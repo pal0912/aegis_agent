@@ -5,15 +5,27 @@ and deterministic policy interception for autonomous agent tool invocations (Aeg
 """
 
 import asyncio
+import contextvars
 import functools
 import inspect
 import json
 import logging
 import re
-from typing import Any, Callable, Dict, List, Optional, Type
+import uuid
+from typing import Any, Callable, Dict, List, Optional, Set, Type
 
 from langchain_core.tools import BaseTool
 from pydantic import ConfigDict, Field
+
+_current_aegis_execution_token: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "_current_aegis_execution_token", default=None
+)
+
+
+class DirectToolInvocationBlockedError(PermissionError):
+    """Raised when an underlying tool is invoked directly without routing through AegisToolWrapper."""
+
+    pass
 
 from aegis.audit import AuditLogger
 from aegis.detector import InjectionDetector
@@ -252,6 +264,98 @@ class AegisToolWrapper(BaseTool):
             last_detector_scan=last_detector_scan,
             **kwargs,
         )
+        wrapper_token = uuid.uuid4().hex
+        object.__setattr__(self, "_aegis_wrapper_token", wrapper_token)
+        self._attach_execution_guard(underlying_tool, wrapper_token)
+
+    @classmethod
+    def _attach_execution_guard(cls, tool: Any, token: str) -> None:
+        """Bind an execution guard token to the underlying tool, locking direct invocation."""
+        valid_tokens: Optional[Set[str]] = getattr(tool, "_aegis_valid_tokens", None)
+        if valid_tokens is None:
+            valid_tokens = set()
+            try:
+                object.__setattr__(tool, "_aegis_valid_tokens", valid_tokens)
+            except Exception:
+                pass
+        valid_tokens.add(token)
+
+        if getattr(tool, "_aegis_execution_guard_attached", False):
+            return
+
+        tool_name = getattr(tool, "name", str(tool))
+
+        # Guard synchronous _run
+        if hasattr(tool, "_run"):
+            orig_run = tool._run
+
+            def guarded_run(*args: Any, **kwargs: Any) -> Any:
+                active_token = _current_aegis_execution_token.get()
+                tokens = getattr(tool, "_aegis_valid_tokens", set())
+                if active_token is None or active_token not in tokens:
+                    logger.error(
+                        "Direct invocation of underlying tool '%s' blocked. All invocations must route through AegisToolWrapper.",
+                        tool_name,
+                    )
+                    raise DirectToolInvocationBlockedError(
+                        f"Direct invocation of underlying tool '{tool_name}' is blocked. "
+                        f"Tools must be invoked exclusively through AegisToolWrapper to ensure policy enforcement."
+                    )
+                return orig_run(*args, **kwargs)
+
+            try:
+                object.__setattr__(tool, "_run", guarded_run)
+            except Exception as e:
+                logger.warning("Could not guard _run on tool '%s': %s", tool_name, e)
+
+        # Guard asynchronous _arun
+        if hasattr(tool, "_arun"):
+            orig_arun = tool._arun
+
+            async def guarded_arun(*args: Any, **kwargs: Any) -> Any:
+                active_token = _current_aegis_execution_token.get()
+                tokens = getattr(tool, "_aegis_valid_tokens", set())
+                if active_token is None or active_token not in tokens:
+                    logger.error(
+                        "Direct async invocation of underlying tool '%s' blocked. All invocations must route through AegisToolWrapper.",
+                        tool_name,
+                    )
+                    raise DirectToolInvocationBlockedError(
+                        f"Direct async invocation of underlying tool '{tool_name}' is blocked. "
+                        f"Tools must be invoked exclusively through AegisToolWrapper to ensure policy enforcement."
+                    )
+                return await orig_arun(*args, **kwargs)
+
+            try:
+                object.__setattr__(tool, "_arun", guarded_arun)
+            except Exception as e:
+                logger.warning("Could not guard _arun on tool '%s': %s", tool_name, e)
+
+        try:
+            object.__setattr__(tool, "_aegis_execution_guard_attached", True)
+        except Exception:
+            pass
+
+    @classmethod
+    def guard_tools(
+        cls,
+        tools: List[BaseTool],
+        policy_gate: PolicyGate,
+        session: SessionContext,
+        audit_logger: Optional[AuditLogger] = None,
+        last_detector_scan: Optional[ScanResult] = None,
+    ) -> List["AegisToolWrapper"]:
+        """Wrap a collection of tools with AegisToolWrapper and return only guarded handles."""
+        return [
+            cls(
+                underlying_tool=tool,
+                policy_gate=policy_gate,
+                session=session,
+                audit_logger=audit_logger,
+                last_detector_scan=last_detector_scan,
+            )
+            for tool in tools
+        ]
 
     def _build_arguments_dict(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
         """Convert invocation positional arguments and keyword arguments into a clean dictionary."""
@@ -315,9 +419,13 @@ class AegisToolWrapper(BaseTool):
 
         # 1. ALLOW -> Normal Authorized Execution
         if decision.verdict == PolicyVerdict.ALLOW.value:
-            if args:
-                return self.underlying_tool.run(*args, **kwargs)
-            return self.underlying_tool.run(args_dict)
+            tok_reset = _current_aegis_execution_token.set(getattr(self, "_aegis_wrapper_token", None))
+            try:
+                if args:
+                    return self.underlying_tool.run(*args, **kwargs)
+                return self.underlying_tool.run(args_dict)
+            finally:
+                _current_aegis_execution_token.reset(tok_reset)
 
         # 2. ALLOW_RESTRICTED -> Execute strictly within verified restriction envelope
         if decision.verdict == PolicyVerdict.ALLOW_RESTRICTED.value:
@@ -401,9 +509,13 @@ class AegisToolWrapper(BaseTool):
 
         # 1. ALLOW -> Normal Authorized Async Execution
         if decision.verdict == PolicyVerdict.ALLOW.value:
-            if args:
-                return await self.underlying_tool.arun(*args, **kwargs)
-            return await self.underlying_tool.arun(args_dict)
+            tok_reset = _current_aegis_execution_token.set(getattr(self, "_aegis_wrapper_token", None))
+            try:
+                if args:
+                    return await self.underlying_tool.arun(*args, **kwargs)
+                return await self.underlying_tool.arun(args_dict)
+            finally:
+                _current_aegis_execution_token.reset(tok_reset)
 
         # 2. ALLOW_RESTRICTED -> Execute strictly within verified restriction envelope
         if decision.verdict == PolicyVerdict.ALLOW_RESTRICTED.value:
@@ -451,10 +563,14 @@ class AegisToolWrapper(BaseTool):
             logger.warning("AegisToolWrapper restriction violation on tool '%s': %s", self.name, violation)
             return f"[AEGIS RESTRICTION VIOLATION]: {violation}"
 
-        if args:
-            raw_output = self.underlying_tool.run(*args, **kwargs)
-        else:
-            raw_output = self.underlying_tool.run(args_dict)
+        tok_reset = _current_aegis_execution_token.set(getattr(self, "_aegis_wrapper_token", None))
+        try:
+            if args:
+                raw_output = self.underlying_tool.run(*args, **kwargs)
+            else:
+                raw_output = self.underlying_tool.run(args_dict)
+        finally:
+            _current_aegis_execution_token.reset(tok_reset)
 
         if restriction_policy.sanitize_output:
             sanitizer = ContextSanitizer()
@@ -484,10 +600,14 @@ class AegisToolWrapper(BaseTool):
             logger.warning("AegisToolWrapper async restriction violation on tool '%s': %s", self.name, violation)
             return f"[AEGIS RESTRICTION VIOLATION]: {violation}"
 
-        if args:
-            raw_output = await self.underlying_tool.arun(*args, **kwargs)
-        else:
-            raw_output = await self.underlying_tool.arun(args_dict)
+        tok_reset = _current_aegis_execution_token.set(getattr(self, "_aegis_wrapper_token", None))
+        try:
+            if args:
+                raw_output = await self.underlying_tool.arun(*args, **kwargs)
+            else:
+                raw_output = await self.underlying_tool.arun(args_dict)
+        finally:
+            _current_aegis_execution_token.reset(tok_reset)
 
         if restriction_policy.sanitize_output:
             sanitizer = ContextSanitizer()

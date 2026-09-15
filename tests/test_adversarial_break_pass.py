@@ -39,7 +39,11 @@ from aegis.dlp import DataLossPreventionEngine
 from aegis.identity import AgentIdentityManager
 from aegis.inter_agent import InterAgentChannelGuard
 from aegis.mcp_guard import MCPSecurityGuard
-from aegis.middleware import AegisToolWrapper, RestrictedExecutionPolicy
+from aegis.middleware import (
+    AegisToolWrapper,
+    DirectToolInvocationBlockedError,
+    RestrictedExecutionPolicy,
+)
 from aegis.network_guard import OutboundNetworkGuard
 from aegis.policy_gate import PolicyGate
 from aegis.sandbox import IsolatedCodeSandbox
@@ -683,3 +687,65 @@ def test_security_invariant_property_fuzzing():
     decision = gate.evaluate_tool_call(session, proposal)
     assert decision.verdict == PolicyVerdict.BLOCK.value
     assert decision.blast_radius_contained is True
+
+
+# ===========================================================================
+# 18. Direct Tool Bypass Elimination & Guard Protection
+# ===========================================================================
+def test_direct_tool_bypass_elimination_and_guard_protection():
+    """Verify that once wrapped in AegisToolWrapper, direct invocation of the raw tool
+
+    outside of AegisToolWrapper is blocked with DirectToolInvocationBlockedError,
+    while authorized execution via AegisToolWrapper succeeds.
+    """
+    import asyncio
+
+    raw_tool = MockInstrumentedTool(name="sensitive_file_tool")
+    session = SessionContext(session_id="bypass-session", user_root_intent="Read public file")
+    gate = PolicyGate(lazy_load=True)
+
+    # Wrap tool with AegisToolWrapper
+    wrapper = AegisToolWrapper(
+        underlying_tool=raw_tool,
+        policy_gate=gate,
+        session=session,
+    )
+
+    # 1. Attempt bypass: Direct synchronous invocation of raw_tool
+    with pytest.raises(DirectToolInvocationBlockedError) as exc_info:
+        raw_tool.run({"path": "/etc/shadow"})
+    assert "Direct invocation of underlying tool 'sensitive_file_tool' is blocked" in str(exc_info.value)
+    assert raw_tool.call_count == 0
+
+    # 2. Attempt bypass: Direct invocation via wrapper.underlying_tool
+    with pytest.raises(DirectToolInvocationBlockedError) as exc_info:
+        wrapper.underlying_tool.run({"path": "/etc/shadow"})
+    assert "Direct invocation of underlying tool 'sensitive_file_tool' is blocked" in str(exc_info.value)
+    assert raw_tool.call_count == 0
+
+    # 3. Attempt bypass: Direct asynchronous invocation of raw_tool
+    with pytest.raises(DirectToolInvocationBlockedError) as exc_info:
+        asyncio.run(raw_tool.arun({"path": "/etc/shadow"}))
+    assert "Direct async invocation of underlying tool 'sensitive_file_tool' is blocked" in str(exc_info.value)
+    assert raw_tool.call_count == 0
+
+    # 4. Attempt bypass: Direct async invocation via wrapper.underlying_tool
+    with pytest.raises(DirectToolInvocationBlockedError) as exc_info:
+        asyncio.run(wrapper.underlying_tool.arun({"path": "/etc/shadow"}))
+    assert "Direct async invocation of underlying tool 'sensitive_file_tool' is blocked" in str(exc_info.value)
+    assert raw_tool.call_count == 0
+
+    # 5. Protected Path: Authorized execution via AegisToolWrapper.run
+    res = wrapper.run({"path": "public_doc.txt"})
+    assert raw_tool.call_count == 1
+    assert "EXECUTED_BY_UNDERLYING_TOOL:1" in str(res)
+
+    # 6. Protected Path: Authorized execution via AegisToolWrapper.arun
+    async_res = asyncio.run(wrapper.arun({"path": "public_doc.txt"}))
+    assert raw_tool.call_count == 2
+    assert "ASYNC_EXECUTED_BY_UNDERLYING_TOOL:2" in str(async_res)
+
+    # 7. Test guard_tools batch helper
+    guarded_list = AegisToolWrapper.guard_tools([MockInstrumentedTool(name="t2")], gate, session)
+    assert len(guarded_list) == 1
+    assert isinstance(guarded_list[0], AegisToolWrapper)
