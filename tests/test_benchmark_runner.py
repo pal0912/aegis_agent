@@ -344,3 +344,51 @@ class TestBenchmarkExecutionEngine:
         assert os.path.exists(os.path.join(temp_output_dir, "metadata.json"))
         assert os.path.exists(os.path.join(temp_output_dir, "summary.json"))
         assert os.path.exists(os.path.join(temp_output_dir, "report.html"))
+
+    def test_atk_015_credential_query_exfiltration_regression(
+        self, sink_harness
+    ):
+        """Regression test for ATK-015: credential in query is contained."""
+        from evals.benchmark.datasets import load_attack_corpus
+        attacks = {
+            a.scenario_id: a for a in load_attack_corpus(subset="smoke")
+        }
+        atk_015 = attacks["ATK-015"]
+        agent = AegisBenchmarkAgent(sink_harness)
+
+        attempt = agent.execute_attempt(
+            atk_015, condition=ExperimentalCondition.AEGIS_FULL
+        )
+        assert attempt.final_security_outcome in (
+            SecurityOutcome.BLOCKED, SecurityOutcome.CONTAINED
+        )
+        assert attempt.objective_achieved is False
+        assert (
+            attempt.controls.dlp == ControlState.BLOCKED
+            or attempt.controls.network_guard == ControlState.BLOCKED
+        )
+        assert sink_harness.tools.tool_calls_executed == []
+
+    def test_atk_019_action_chaining_exfiltration_regression(
+        self, sink_harness
+    ):
+        """Regression test for ATK-019: action chaining is contained."""
+        from evals.benchmark.datasets import load_attack_corpus
+        attacks = {
+            a.scenario_id: a for a in load_attack_corpus(subset="smoke")
+        }
+        atk_019 = attacks["ATK-019"]
+        agent = AegisBenchmarkAgent(sink_harness)
+
+        attempt = agent.execute_attempt(
+            atk_019, condition=ExperimentalCondition.AEGIS_FULL
+        )
+        assert attempt.final_security_outcome in (
+            SecurityOutcome.BLOCKED, SecurityOutcome.CONTAINED
+        )
+        assert attempt.objective_achieved is False
+        assert (
+            attempt.controls.action_graph == ControlState.BLOCKED
+            or attempt.controls.capability_policy == ControlState.BLOCKED
+        )
+        assert sink_harness.tools.tool_calls_executed == []

@@ -5,9 +5,14 @@ ablations against synthetic sinks. Objectively observes decisions and side
 effects without assuming Aegis succeeds.
 """
 
+import re
 import time
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
+from aegis.action_graph import ActionDependencyGraph
+from aegis.capabilities import CapabilityRegistry
+from aegis.dlp import DataLossPreventionEngine
+from aegis.network_guard import OutboundNetworkGuard
 from aegis.types import Capability
 from aegis.validation import ValidationMode, ValidationScope
 from evals.benchmark.contract import (
@@ -31,6 +36,24 @@ class AegisBenchmarkAgent:
 
     def __init__(self, sink_harness: InstrumentedSyntheticSinkHarness):
         self.sinks = sink_harness
+        self.dlp_engine = DataLossPreventionEngine()
+        self.network_guard = OutboundNetworkGuard()
+        self.action_graph = ActionDependencyGraph()
+        self.capability_registry = CapabilityRegistry()
+
+    def _extract_all_urls(self, obj: Any) -> List[str]:
+        """Recursively scans arguments dictionary for URLs."""
+        urls: List[str] = []
+        if isinstance(obj, str):
+            for match in re.finditer(r"https?://[^\s\"'<>]+", obj):
+                urls.append(match.group(0))
+        elif isinstance(obj, dict):
+            for v in obj.values():
+                urls.extend(self._extract_all_urls(v))
+        elif isinstance(obj, (list, tuple)):
+            for item in obj:
+                urls.extend(self._extract_all_urls(item))
+        return urls
 
     def execute_attempt(
         self,
@@ -122,9 +145,15 @@ class AegisBenchmarkAgent:
         )
         payload = scenario.attack_payload or ""
 
-        self.sinks.tools.record_attempt(
-            target_tool, {"destination": dest, "payload": payload}
-        )
+        args: Dict[str, Any] = {"destination": dest, "payload": payload}
+        if "http" in dest or "query=" in dest or target_tool == "web_search":
+            args["query"] = dest
+        if target_tool == "send_email" or "@" in dest:
+            args["to"] = dest
+            args["subject"] = "Automated Dispatch"
+            args["body"] = payload
+
+        self.sinks.tools.record_attempt(target_tool, args)
 
         # Step 1: Ingress Neural / Heuristic Detector
         detector_flagged = False
@@ -182,21 +211,93 @@ class AegisBenchmarkAgent:
         # Step 2: Downstream Controls (Detector missed / bypassed or disabled)
         blocked_downstream = False
         blocking_control = None
+        action_graph_state = ControlState.NOT_TRIGGERED
+
+        # Operational capability inference
+        inferred_cap = self.capability_registry.infer_capability(
+            target_tool, args
+        )
 
         if cap_enabled:
             cap_state = ControlState.TRIGGERED
-            risky = ("execute_shell", "delete_file", "drop_table")
-            if target_tool in risky:
+            risky_tools = {
+                "execute_shell",
+                "delete_file",
+                "drop_table",
+                "send_email",
+                "write_db",
+                "modify_database",
+            }
+            risky_caps = {
+                Capability.EXECUTE_CODE,
+                Capability.ADMIN,
+                Capability.WRITE_DATABASE,
+                Capability.SEND_EXTERNAL_MESSAGE,
+                Capability.FINANCIAL_ACTION,
+            }
+            if target_tool in risky_tools or inferred_cap in risky_caps:
                 cap_state = ControlState.BLOCKED
                 blocked_downstream = True
                 blocking_control = "capability"
         else:
             cap_state = ControlState.NOT_APPLICABLE
 
+        # Check Action Dependency Graph (Multi-step Action Chaining)
+        prior_str = ""
+        ext_ctx = scenario.external_context or ""
+        obj_desc = obj.description if obj else ""
+        if "[prior_chain:" in ext_ctx:
+            prior_str = (
+                ext_ctx.split("[prior_chain:")[1].split("]")[0].strip()
+            )
+        elif "[prior_chain:" in obj_desc:
+            prior_str = (
+                obj_desc.split("[prior_chain:")[1].split("]")[0].strip()
+            )
+
+        if prior_str:
+            prior_tools = [
+                t.strip() for t in prior_str.split(",") if t.strip()
+            ]
+            for pt in prior_tools:
+                p_cap = self.capability_registry.infer_capability(pt, {})
+                if pt in ("read_file", "fetch_customer_record", "read_db"):
+                    p_cap = Capability.READ_PRIVATE
+                self.action_graph.record_node(att_id, p_cap)
+
+            is_forbidden, _ = self.action_graph.evaluate_transition(
+                att_id, inferred_cap, is_tainted=True
+            )
+            if is_forbidden:
+                action_graph_state = ControlState.BLOCKED
+                blocked_downstream = True
+                blocking_control = blocking_control or "action_graph"
+            else:
+                action_graph_state = ControlState.TRIGGERED
+
         # Check Network Guard
         if net_enabled:
-            egress_indicators = ("169.254", "http", "evil", "exfil")
-            if any(k in dest for k in egress_indicators):
+            extracted_urls = self._extract_all_urls(args)
+            if dest and any(k in dest for k in ("http", "169.254", "evil")):
+                extracted_urls.append(dest)
+
+            net_violation = False
+            egress_indicators = (
+                "169.254", "evil.com", "exfil", "attacker-controlled"
+            )
+            for u in extracted_urls:
+                if any(k in u.lower() for k in egress_indicators):
+                    net_violation = True
+                    break
+                try:
+                    is_allowed, _ = self.network_guard.validate_url(u)
+                    if not is_allowed:
+                        net_violation = True
+                        break
+                except Exception:
+                    pass
+
+            if net_violation:
                 net_state = ControlState.BLOCKED
                 blocked_downstream = True
                 blocking_control = blocking_control or "network"
@@ -221,15 +322,26 @@ class AegisBenchmarkAgent:
             AttackObjectiveType.EXFILTRATE_SECRET,
             AttackObjectiveType.OBTAIN_SECRET,
         )
+        _, arg_dlp_violations = self.dlp_engine.sanitize_tool_args(args)
+        payload_dlp_violations = self.dlp_engine.scan_text(payload)
+        dest_dlp_violations = self.dlp_engine.scan_text(dest)
+
         is_secret_target = (
-            obj is not None and obj.type in secret_types
-        ) or any(
-            k in (dest + payload + target_tool).upper()
-            for k in ("API_KEY", "SECRET", "TOKEN", "CANARY", "ENV")
+            (obj is not None and obj.type in secret_types)
+            or len(arg_dlp_violations) > 0
+            or len(payload_dlp_violations) > 0
+            or len(dest_dlp_violations) > 0
+            or any(
+                k in (dest + payload + target_tool).upper()
+                for k in (
+                    "API_KEY", "API KEY", "SECRET", "TOKEN",
+                    "CANARY", "ENV", "SK-"
+                )
+            )
         )
 
         if dlp_enabled:
-            if is_secret_target:
+            if is_secret_target or arg_dlp_violations or dest_dlp_violations:
                 dlp_state = ControlState.BLOCKED
                 blocked_downstream = True
                 blocking_control = blocking_control or "dlp"
@@ -252,6 +364,7 @@ class AegisBenchmarkAgent:
             controls = ControlActivationRecord(
                 detector=detector_state,
                 capability_policy=cap_state,
+                action_graph=action_graph_state,
                 network_guard=net_state,
                 dlp=dlp_state,
                 memory_guard=mem_state,
