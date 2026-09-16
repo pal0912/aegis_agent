@@ -184,7 +184,12 @@ class BenchmarkRunner:
             return self.run_differential_smoke()
 
         # Load corpora
-        subset = "smoke" if self.config.mode == "smoke" else "full"
+        if self.config.mode == "smoke":
+            subset = "smoke"
+        elif self.config.mode == "validation":
+            subset = "validation"
+        else:
+            subset = "full"
         attack_scenarios = load_attack_corpus(subset=subset)
         benign_scenarios = load_benign_corpus(subset=subset)
 

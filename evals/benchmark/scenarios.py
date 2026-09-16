@@ -227,6 +227,7 @@ class AegisBenchmarkAgent:
                 "send_email",
                 "write_db",
                 "modify_database",
+                "modify_memory",
             }
             risky_caps = {
                 Capability.EXECUTE_CODE,
@@ -235,7 +236,19 @@ class AegisBenchmarkAgent:
                 Capability.SEND_EXTERNAL_MESSAGE,
                 Capability.FINANCIAL_ACTION,
             }
-            if target_tool in risky_tools or inferred_cap in risky_caps:
+            # Catch tool tampering or arbitrary tool binding via mcp_call
+            tamper_terms = (
+                "replace_tool", "binary", "system_exec", "admin"
+            )
+            is_tool_tampering = (
+                target_tool == "mcp_call"
+                and any(k in str(args).lower() for k in tamper_terms)
+            )
+            if (
+                target_tool in risky_tools
+                or inferred_cap in risky_caps
+                or is_tool_tampering
+            ):
                 cap_state = ControlState.BLOCKED
                 blocked_downstream = True
                 blocking_control = "capability"

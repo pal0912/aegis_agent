@@ -155,7 +155,10 @@ def _map_benign_document_to_scenario(
 def load_attack_corpus(subset: str = "smoke") -> List[ScenarioDefinition]:
     """Loads validated attack scenarios.
 
-    subset: 'smoke' loads 6 vectors; 'full' loads all 20 vectors.
+    subset:
+      - 'smoke': loads 6 representative vectors
+      - 'validation': loads 18 vectors across all categories
+      - 'full': loads all 52 vectors
     """
     from evals.attack_dataset import ATTACK_DATASET
 
@@ -165,6 +168,20 @@ def load_attack_corpus(subset: str = "smoke") -> List[ScenarioDefinition]:
             "ATK-001", "ATK-002", "ATK-003", "ATK-013", "ATK-015", "ATK-019"
         }
         vectors = [v for v in ATTACK_DATASET if v["id"] in smoke_ids]
+    elif subset == "validation":
+        # 18 scenarios: 2 per attack family across all 9 families
+        val_ids = {
+            "ATK-001", "ATK-004",  # PROMPT_INJECTION
+            "ATK-007", "ATK-011",  # OBFUSCATION
+            "ATK-013", "ATK-016",  # TOOL_ABUSE
+            "ATK-019", "ATK-022",  # EXFILTRATION
+            "ATK-025", "ATK-027",  # MEMORY_POISONING
+            "ATK-031", "ATK-033",  # MCP_VULNERABILITY
+            "ATK-037", "ATK-039",  # MULTI_AGENT
+            "ATK-043", "ATK-045",  # MULTIMODAL
+            "ATK-049", "ATK-051",  # NETWORK_SSRF
+        }
+        vectors = [v for v in ATTACK_DATASET if v["id"] in val_ids]
 
     return [_map_attack_vector_to_scenario(v) for v in vectors]
 
@@ -172,7 +189,10 @@ def load_attack_corpus(subset: str = "smoke") -> List[ScenarioDefinition]:
 def load_benign_corpus(subset: str = "smoke") -> List[ScenarioDefinition]:
     """Loads validated benign scenarios.
 
-    subset: 'smoke' loads 5 documents; 'full' loads all 10 documents.
+    subset:
+      - 'smoke': loads 5 documents
+      - 'validation': loads 10 documents
+      - 'full': loads all 26 documents
     """
     from evals.benign_dataset import BENIGN_DATASET
 
@@ -180,6 +200,11 @@ def load_benign_corpus(subset: str = "smoke") -> List[ScenarioDefinition]:
     if subset == "smoke":
         smoke_ids = {"BNG-001", "BNG-002", "BNG-003", "BNG-004", "BNG-005"}
         docs = [d for d in BENIGN_DATASET if d["id"] in smoke_ids]
+    elif subset == "validation":
+        val_ids = {
+            f"BNG-{i:03d}" for i in range(1, 11)
+        }
+        docs = [d for d in BENIGN_DATASET if d["id"] in val_ids]
 
     return [_map_benign_document_to_scenario(d) for d in docs]
 

@@ -128,7 +128,15 @@ def export_run_artifacts(
                 ])
     paths["ablations"] = str(ablations_file)
 
-    # 7. report.html
+    # 7. latency.csv (11 components profiled)
+    latency_file = out_path / "latency.csv"
+    from evals.benchmark.profiler import ComponentLatencyProfiler
+    profiler = ComponentLatencyProfiler(warmup_runs=5, measurement_runs=50)
+    profile_results = profiler.run_all_profiles()
+    profiler.export_csv(profile_results, str(latency_file))
+    paths["latency"] = str(latency_file)
+
+    # 8. report.html
     html_file = out_path / "report.html"
     from evals.benchmark.reports import generate_html_report
     generate_html_report(result, str(html_file))

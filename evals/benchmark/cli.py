@@ -22,7 +22,7 @@ def parse_args(argv: List[str] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--mode",
-        choices=["smoke", "full", "differential_smoke"],
+        choices=["smoke", "validation", "full", "differential_smoke"],
         default="smoke",
         help="Benchmark execution mode (default: smoke).",
     )
