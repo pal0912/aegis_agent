@@ -126,6 +126,7 @@ class ValidationScopeMode(str, Enum):
     """Permitted validation modes for safe benchmark execution."""
     DRY_RUN = "DRY_RUN"
     ISOLATED_TEST = "ISOLATED_TEST"
+    SIMULATION = "SIMULATION"
 
 
 # ============================================================================
@@ -532,6 +533,7 @@ class BenchmarkMetadata(BaseModel):
     gpu_info: Optional[str] = None
     aegis_version: str
     detector_version: str
+    git_commit: Optional[str] = None
     policy_version: str
     config_hash: str
     dataset_version: str

@@ -36,8 +36,8 @@ def parse_args(argv: List[str] = None) -> argparse.Namespace:
         choices=[
             "none", "all", "dlp", "network", "detector", "capability", "memory"
         ],
-        default="none",
-        help="Single-control ablation condition to evaluate (default: none).",
+        default="all",
+        help="Single-control ablation condition to evaluate (default: all).",
     )
     parser.add_argument(
         "--seed",

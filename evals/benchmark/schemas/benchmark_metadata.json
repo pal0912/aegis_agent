@@ -52,6 +52,18 @@
       "title": "Detector Version",
       "type": "string"
     },
+    "git_commit": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Git Commit"
+    },
     "policy_version": {
       "title": "Policy Version",
       "type": "string"

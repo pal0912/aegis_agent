@@ -156,7 +156,8 @@
       "description": "Permitted validation modes for safe benchmark execution.",
       "enum": [
         "DRY_RUN",
-        "ISOLATED_TEST"
+        "ISOLATED_TEST",
+        "SIMULATION"
       ],
       "title": "ValidationScopeMode",
       "type": "string"

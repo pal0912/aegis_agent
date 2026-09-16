@@ -238,6 +238,20 @@ class BenchmarkRunner:
         )
         cfg_hash = hashlib.sha256(cfg_str.encode("utf-8")).hexdigest()
 
+        git_commit = None
+        try:
+            import subprocess
+            res = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if res.returncode == 0:
+                git_commit = res.stdout.strip()
+        except Exception:
+            pass
+
         return BenchmarkMetadata(
             run_id=self.config.run_id,
             random_seed=self.config.seed,
@@ -247,6 +261,7 @@ class BenchmarkRunner:
             gpu_info=None,
             aegis_version="2.0.0",
             detector_version="deberta-v3-small-ipi-v2",
+            git_commit=git_commit,
             policy_version="strict-enterprise-v1.0",
             config_hash=cfg_hash,
             dataset_version=BENCHMARK_DATASET_VERSION,
