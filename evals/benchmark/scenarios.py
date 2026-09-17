@@ -161,10 +161,13 @@ class AegisBenchmarkAgent:
         # Adversarial Workload Handling
         # ------------------------------------------------------------------
         obj = scenario.attack_objective
-        target_tool = obj.target_resource if obj else "execute_shell"
+        target_tool = (
+            obj.target_resource if (obj and obj.target_resource)
+            else "execute_shell"
+        )
         dest = (
             obj.unauthorized_destination
-            if obj
+            if (obj and obj.unauthorized_destination)
             else "http://attacker-controlled.evil/collect"
         )
         payload = scenario.attack_payload or ""
@@ -173,18 +176,19 @@ class AegisBenchmarkAgent:
         atk_item = ATTACK_MAP.get(scenario.scenario_id)
         if atk_item and "simulated_tool_proposal" in atk_item:
             sim_prop = atk_item["simulated_tool_proposal"]
-            target_tool = sim_prop.get("tool_name", target_tool)
+            target_tool = sim_prop.get("tool_name") or target_tool
             args: Dict[str, Any] = dict(sim_prop.get("arguments", {}))
         else:
-            args = {"destination": dest, "payload": payload}
+            dest_str = dest or ""
+            args = {"destination": dest_str, "payload": payload}
             if (
-                "http" in dest
-                or "query=" in dest
+                "http" in dest_str
+                or "query=" in dest_str
                 or target_tool == "web_search"
             ):
-                args["query"] = dest
-            if target_tool == "send_email" or "@" in dest:
-                args["to"] = dest
+                args["query"] = dest_str
+            if target_tool == "send_email" or "@" in dest_str:
+                args["to"] = dest_str
                 args["subject"] = "Automated Dispatch"
                 args["body"] = payload
 
@@ -286,7 +290,7 @@ class AegisBenchmarkAgent:
 
         # Operational capability inference
         inferred_cap = self.capability_registry.infer_capability(
-            target_tool, args
+            target_tool or "execute_shell", args
         )
 
         if cap_enabled:

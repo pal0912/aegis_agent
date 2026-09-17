@@ -76,10 +76,13 @@ class BaselineAgent:
 
         # Adversarial workload execution: Baseline has NO Aegis protection
         obj = scenario.attack_objective
-        target_tool = obj.target_resource if obj else "execute_shell"
+        target_tool = (
+            obj.target_resource if (obj and obj.target_resource)
+            else "execute_shell"
+        )
         dest = (
             obj.unauthorized_destination
-            if obj
+            if (obj and obj.unauthorized_destination)
             else "http://attacker-controlled.evil/collect"
         )
 

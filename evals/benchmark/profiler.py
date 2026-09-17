@@ -81,11 +81,13 @@ class ComponentLatencyProfiler:
             d1 = samples_ms[int(c)] * (k - f)
             return d0 + d1
 
+        stdev_val = statistics.stdev(samples_ms) if n > 1 else 0.0
         return {
             "cold_start_ms": cold_start_ms,
             "warmup_runs": w_runs,
             "sample_count": n,
             "mean_ms": statistics.mean(samples_ms),
+            "stdev_ms": stdev_val,
             "median_ms": statistics.median(samples_ms),
             "p50_ms": percentile(0.50),
             "p95_ms": percentile(0.95),
@@ -265,6 +267,7 @@ class ComponentLatencyProfiler:
                 "warmup_runs": self.neural_warmup_runs,
                 "sample_count": 0,
                 "mean_ms": 0.0,
+                "stdev_ms": 0.0,
                 "median_ms": 0.0,
                 "p50_ms": 0.0,
                 "p95_ms": 0.0,
@@ -312,6 +315,7 @@ class ComponentLatencyProfiler:
                 "warmup_runs": 0,
                 "sample_count": 0,
                 "mean_ms": 0.0,
+                "stdev_ms": 0.0,
                 "median_ms": 0.0,
                 "p50_ms": 0.0,
                 "p95_ms": 0.0,
@@ -339,12 +343,12 @@ class ComponentLatencyProfiler:
             "category": "END_TO_END",
             "component": "Full Security Middleware + Agent Reasoning",
             "status": "AVAILABLE",
-            "execution_mode": "FULL_STACK_E2E",
-            "model_name": exact_model if neural_available else "N/A",
-            "tokenizer_name": tokenizer_name if neural_available else "N/A",
+            "execution_mode": "END_TO_END_PIPELINE",
+            "model_name": exact_model,
+            "tokenizer_name": tokenizer_name,
             "device": device_str,
-            "seq_len": seq_len_val if neural_available else "N/A",
-            "batch_size": 1 if neural_available else "N/A",
+            "seq_len": seq_len_val,
+            "batch_size": 1,
         })
         results.append(m_e2e)
 
@@ -368,6 +372,7 @@ class ComponentLatencyProfiler:
             "sample_count",
             "cold_start_ms",
             "mean_ms",
+            "stdev_ms",
             "median_ms",
             "p50_ms",
             "p95_ms",
@@ -413,6 +418,7 @@ class ComponentLatencyProfiler:
             "warm_p95_ms": neural_row.get("p95_ms"),
             "warm_p99_ms": neural_row.get("p99_ms"),
             "mean_ms": neural_row.get("mean_ms"),
+            "stdev_ms": neural_row.get("stdev_ms", 0.0),
             "min_ms": neural_row.get("min_ms"),
             "max_ms": neural_row.get("max_ms"),
         }
