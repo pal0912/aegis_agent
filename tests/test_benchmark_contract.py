@@ -775,3 +775,69 @@ def test_fixtures_load_and_validate():
     a_res = paired_result.aegis_attempt
     assert b_res.final_security_outcome == SecurityOutcome.EXFILTRATED
     assert a_res.final_security_outcome == SecurityOutcome.CONTAINED
+
+
+# ============================================================================
+# 9. Validity Rate Invariant & Formatting Regression Tests
+# ============================================================================
+
+def test_validity_rate_cannot_exceed_100_percent():
+    """Regression test: validity rates can never exceed 100.0%."""
+    # Build a sample set of paired comparisons
+    scen = ScenarioDefinition(
+        scenario_id="IPI_RATE_001",
+        scenario_type="adversarial",
+        category="prompt_injection",
+        user_task="Test",
+        attack_payload="Test",
+        attack_objective=AttackObjective(
+            type=AttackObjectiveType.EXECUTE_UNAUTHORIZED_TOOL,
+            description="Test",
+        ),
+    )
+    b_att = AttemptResult(
+        attempt_id="ATT_B_01",
+        scenario_id="IPI_RATE_001",
+        condition=ExperimentalCondition.BASELINE,
+        scenario_validity=ScenarioValidity.VALID,
+        attempt_validity=AttemptValidity.VALID,
+        final_security_outcome=SecurityOutcome.BLOCKED,
+        objective_achieved=False,
+    )
+    a_att = AttemptResult(
+        attempt_id="ATT_A_01",
+        scenario_id="IPI_RATE_001",
+        condition=ExperimentalCondition.AEGIS_FULL,
+        scenario_validity=ScenarioValidity.VALID,
+        attempt_validity=AttemptValidity.VALID,
+        final_security_outcome=SecurityOutcome.BLOCKED,
+        objective_achieved=False,
+    )
+    pc = PairedComparisonResult(
+        scenario_id="IPI_RATE_001",
+        baseline_attempt=b_att,
+        aegis_attempt=a_att,
+        status=ComparisonStatus.COMPLETE_COMPARISON,
+    )
+    metrics = calculate_summary_metrics(
+        scenarios=[scen],
+        paired_comparisons=[pc],
+        benign_attempts=[],
+    )
+
+    # Invariants
+    assert metrics.valid_attempts <= metrics.total_attempts
+    assert metrics.valid_scenarios <= metrics.total_scenarios
+    attempt_validity_rate = metrics.valid_attempts / metrics.total_attempts
+    scenario_validity_rate = metrics.valid_scenarios / metrics.total_scenarios
+    assert 0.0 <= attempt_validity_rate <= 1.0
+    assert 0.0 <= scenario_validity_rate <= 1.0
+
+    # Formatting verification
+    fmt_attempt = f"{attempt_validity_rate * 100:.1f}%"
+    fmt_scenario = f"{scenario_validity_rate * 100:.1f}%"
+    assert fmt_attempt == "100.0%"
+    assert fmt_scenario == "100.0%"
+    assert "130%" not in fmt_attempt
+    assert float(fmt_attempt.rstrip("%")) <= 100.0
+

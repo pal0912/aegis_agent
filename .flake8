@@ -10,7 +10,8 @@ exclude =
     .venv,
     env,
     .env,
-    *.egg-info
+    *.egg-info,
+    scratch
 per-file-ignores =
     tests/*: F401, F841, E306, W391, E303
     evals/*: F401, F403, F841, E303, W391, E306
