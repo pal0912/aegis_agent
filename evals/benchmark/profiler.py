@@ -16,6 +16,7 @@ min, max) and exports latency.csv and neural metadata.
 """
 
 import csv
+from enum import Enum
 import json
 import math
 import statistics
@@ -29,24 +30,64 @@ from aegis.network_guard import OutboundNetworkGuard
 from aegis.types import Capability
 
 
+class LatencyPopulation(str, Enum):
+    """Explicit taxonomy distinguishing latency populations."""
+
+    HEURISTIC_ONLY = "HEURISTIC_ONLY"
+    DETERMINISTIC_MIDDLEWARE = "DETERMINISTIC_MIDDLEWARE"
+    REAL_NEURAL_DETECTOR = "REAL_NEURAL_DETECTOR"
+    FULL_AEGIS_WITH_NEURAL = "FULL_AEGIS_WITH_NEURAL"
+    END_TO_END = "END_TO_END"
+
+
+def format_headline_latency(
+    profile_results: List[Dict[str, Any]],
+    target_population: LatencyPopulation = (
+        LatencyPopulation.FULL_AEGIS_WITH_NEURAL
+    ),
+) -> str:
+    """Formats headline latency explicitly naming the population."""
+    row = next(
+        (r for r in profile_results if r.get("category") == target_population.value),
+        None,
+    )
+    if not row:
+        return f"Population {target_population.value}: NOT PROFILED"
+    status = row.get("status", "UNKNOWN")
+    if status != "AVAILABLE":
+        return f"Population {target_population.value}: {status}"
+    p50 = row.get("p50_ms", 0.0)
+    p95 = row.get("p95_ms", 0.0)
+    samples = row.get("sample_count", 0)
+    return (
+        f"Population [{target_population.value}]: "
+        f"P50={p50:.2f}ms, P95={p95:.2f}ms (N={samples} samples)"
+    )
+
+
 class ComponentLatencyProfiler:
     """Measures precise execution latency of Aegis security tiers."""
 
     def __init__(
         self,
         warmup_runs: int = 5,
-        measurement_runs: int = 50,
-        neural_warmup_runs: int = 2,
-        neural_measurement_runs: int = 10,
+        measurement_runs: int = 100,
+        neural_warmup_runs: int = 5,
+        neural_measurement_runs: int = 50,
     ) -> None:
         self.warmup_runs = warmup_runs
         self.measurement_runs = measurement_runs
         self.neural_warmup_runs = neural_warmup_runs
         self.neural_measurement_runs = neural_measurement_runs
+        self.neural_forward_pass_count = 0
 
     def _measure_callable(
-        self, func, *args, warmups: Optional[int] = None,
-        measurements: Optional[int] = None, **kwargs
+        self,
+        func,
+        *args,
+        warmups: Optional[int] = None,
+        measurements: Optional[int] = None,
+        **kwargs,
     ) -> Dict[str, float]:
         w_runs = self.warmup_runs if warmups is None else warmups
         m_runs = (
@@ -111,7 +152,6 @@ class ComponentLatencyProfiler:
         sample_url = "https://api.enterprise.corp/v1/metrics"
         sample_args = {"destination": sample_url, "data": sample_text}
 
-        # Subcomponent callables
         def run_sanitizer():
             import html
             return html.escape(sample_text)
@@ -152,7 +192,7 @@ class ComponentLatencyProfiler:
 
         m_heur = self._measure_callable(run_heuristic)
         m_heur.update({
-            "category": "HEURISTIC_ONLY",
+            "category": LatencyPopulation.HEURISTIC_ONLY.value,
             "component": "Rule-Based Regex Heuristics",
             "status": "AVAILABLE",
             "execution_mode": "REAL_HEURISTIC",
@@ -167,7 +207,7 @@ class ComponentLatencyProfiler:
         # 2. DETERMINISTIC_MIDDLEWARE
         m_det_mid = self._measure_callable(run_deterministic_pipeline)
         m_det_mid.update({
-            "category": "DETERMINISTIC_MIDDLEWARE",
+            "category": LatencyPopulation.DETERMINISTIC_MIDDLEWARE.value,
             "component": "Full Deterministic Security Middleware",
             "status": "AVAILABLE",
             "execution_mode": "REAL_DETERMINISTIC",
@@ -179,7 +219,7 @@ class ComponentLatencyProfiler:
         })
         results.append(m_det_mid)
 
-        # Subcomponents for granular inspection
+        # Subcomponents
         subcomps = [
             ("Sanitizer", run_sanitizer),
             ("DLP", run_dlp),
@@ -206,8 +246,6 @@ class ComponentLatencyProfiler:
         # 3. REAL_NEURAL_DETECTOR
         neural_available = False
         neural_error = None
-        detector = None
-        neural_fn = None
         exact_model = "protectai/deberta-v3-base-prompt-injection-v2"
         tokenizer_name = "N/A"
         device_str = "cpu"
@@ -225,23 +263,26 @@ class ComponentLatencyProfiler:
             )
             seq_len_val = len(tokens)
 
-            # Test single execution
             pipeline_obj = detector.classification_pipeline
             pipeline_obj(sample_text)
-            neural_fn = lambda: pipeline_obj(sample_text)  # noqa: E731
+
+            def neural_fn():
+                self.neural_forward_pass_count += 1
+                return pipeline_obj(sample_text)
+
             neural_available = True
         except Exception as exc:
             neural_available = False
             neural_error = str(exc)
 
-        if neural_available and neural_fn is not None:
+        if neural_available:
             m_neural = self._measure_callable(
                 neural_fn,
                 warmups=self.neural_warmup_runs,
                 measurements=self.neural_measurement_runs,
             )
             m_neural.update({
-                "category": "REAL_NEURAL_DETECTOR",
+                "category": LatencyPopulation.REAL_NEURAL_DETECTOR.value,
                 "component": "DeBERTa Neural Prompt Injection Classifier",
                 "status": "AVAILABLE",
                 "execution_mode": "REAL_NEURAL_INFERENCE",
@@ -254,7 +295,7 @@ class ComponentLatencyProfiler:
             results.append(m_neural)
         else:
             results.append({
-                "category": "REAL_NEURAL_DETECTOR",
+                "category": LatencyPopulation.REAL_NEURAL_DETECTOR.value,
                 "component": "DeBERTa Neural Prompt Injection Classifier",
                 "status": "UNAVAILABLE",
                 "execution_mode": "UNAVAILABLE",
@@ -278,7 +319,7 @@ class ComponentLatencyProfiler:
             })
 
         # 4. FULL_AEGIS_WITH_NEURAL
-        if neural_available and neural_fn is not None:
+        if neural_available:
             def run_full_aegis():
                 run_deterministic_pipeline()
                 neural_fn()
@@ -289,7 +330,7 @@ class ComponentLatencyProfiler:
                 measurements=self.neural_measurement_runs,
             )
             m_full.update({
-                "category": "FULL_AEGIS_WITH_NEURAL",
+                "category": LatencyPopulation.FULL_AEGIS_WITH_NEURAL.value,
                 "component": "Deterministic Controls + DeBERTa Detector",
                 "status": "AVAILABLE",
                 "execution_mode": "FULL_SECURITY_MIDDLEWARE",
@@ -302,7 +343,7 @@ class ComponentLatencyProfiler:
             results.append(m_full)
         else:
             results.append({
-                "category": "FULL_AEGIS_WITH_NEURAL",
+                "category": LatencyPopulation.FULL_AEGIS_WITH_NEURAL.value,
                 "component": "Deterministic Controls + DeBERTa Detector",
                 "status": "UNAVAILABLE",
                 "execution_mode": "UNAVAILABLE",
@@ -324,12 +365,11 @@ class ComponentLatencyProfiler:
                 "max_ms": 0.0,
             })
 
-        # 5. END_TO_END (Full security middleware + mock LLM step)
+        # 5. END_TO_END
         def run_e2e_agent():
             run_deterministic_pipeline()
-            if neural_available and neural_fn is not None:
+            if neural_available:
                 neural_fn()
-            # Simulate 15ms agent reasoning latency
             time.sleep(0.015)
 
         m_e2e = self._measure_callable(
@@ -340,7 +380,7 @@ class ComponentLatencyProfiler:
             ),
         )
         m_e2e.update({
-            "category": "END_TO_END",
+            "category": LatencyPopulation.END_TO_END.value,
             "component": "Full Security Middleware + Agent Reasoning",
             "status": "AVAILABLE",
             "execution_mode": "END_TO_END_PIPELINE",
@@ -397,7 +437,7 @@ class ComponentLatencyProfiler:
         neural_row = next(
             (
                 r for r in profile_results
-                if r.get("category") == "REAL_NEURAL_DETECTOR"
+                if r.get("category") == LatencyPopulation.REAL_NEURAL_DETECTOR.value
             ),
             None,
         )

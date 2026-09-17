@@ -4,17 +4,43 @@ Generates self-contained interactive HTML reports and formatted terminal
 summaries adhering strictly to Benchmark Contract v1.0.
 """
 
+import html
 from pathlib import Path
 from typing import TYPE_CHECKING
+import urllib.parse
 
 if TYPE_CHECKING:
     from evals.benchmark.runner import BenchmarkRunResult
 
 
+SAFE_URL_SCHEMES = {"http", "https"}
+
+
+def is_safe_url(url: str) -> bool:
+    """Validates that a URL uses strictly safe schemes (http or https).
+
+    Rejects dangerous schemes like javascript:, data:, vbscript:.
+    """
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        parsed = urllib.parse.urlparse(url.strip())
+        return parsed.scheme.lower() in SAFE_URL_SCHEMES
+    except Exception:
+        return False
+
+
+def sanitize_html_text(text: str) -> str:
+    """Applies contextual HTML escaping across text nodes and attributes."""
+    if text is None:
+        return ""
+    return html.escape(str(text), quote=True)
+
+
 def generate_html_report(
     result: "BenchmarkRunResult", output_path: str
 ) -> None:
-    """Generates a self-contained, clean HTML report."""
+    """Generates a self-contained, clean HTML report with contextual escaping."""
     m = result.summary_metrics
     meta = result.metadata
 
@@ -49,14 +75,14 @@ def generate_html_report(
         b_att = pc.baseline_attempt
         a_att = pc.aegis_attempt
 
-        # Controls triggered
         ctrls_triggered = [
             k for k, v in a_att.controls.model_dump().items()
             if v in ("TRIGGERED", "BLOCKED")
         ]
-        ctrls_str = ", ".join(ctrls_triggered) if ctrls_triggered else "None"
+        ctrls_str = (
+            ", ".join(ctrls_triggered) if ctrls_triggered else "None"
+        )
 
-        # Evidence summary
         ev = a_att.evidence
         ev_items = []
         if ev.secrets_accessed:
@@ -75,15 +101,19 @@ def generate_html_report(
             "badge-danger" if b_att.objective_achieved else "badge-warning"
         )
 
-        b_val = b_att.final_security_outcome.value
-        a_val = a_att.final_security_outcome.value
+        b_val = sanitize_html_text(b_att.final_security_outcome.value)
+        a_val = sanitize_html_text(a_att.final_security_outcome.value)
+        sc_id = sanitize_html_text(pc.scenario_id)
+        ctrls_safe = sanitize_html_text(ctrls_str)
+        ev_safe = sanitize_html_text(ev_str)
+
         row = f"""
         <tr>
-            <td><code>{pc.scenario_id}</code></td>
+            <td><code>{sc_id}</code></td>
             <td><span class="badge {b_badge}">{b_val}</span></td>
             <td><span class="badge {a_badge}">{a_val}</span></td>
-            <td>{ctrls_str}</td>
-            <td><code>{ev_str}</code></td>
+            <td>{ctrls_safe}</td>
+            <td><code>{ev_safe}</code></td>
             <td>{a_att.latency_ms:.1f} ms</td>
         </tr>
         """
@@ -94,10 +124,12 @@ def generate_html_report(
     for bng in result.benign_attempts:
         outcome_val = bng.benign_outcome.value if bng.benign_outcome else "N/A"
         badge = "badge-success" if bng.task_successful else "badge-danger"
+        bng_id = sanitize_html_text(bng.scenario_id)
+        outcome_safe = sanitize_html_text(outcome_val)
         row = f"""
         <tr>
-            <td><code>{bng.scenario_id}</code></td>
-            <td><span class="badge {badge}">{outcome_val}</span></td>
+            <td><code>{bng_id}</code></td>
+            <td><span class="badge {badge}">{outcome_safe}</span></td>
             <td>{'Yes' if bng.task_successful else 'No'}</td>
             <td>{bng.latency_ms:.1f} ms</td>
         </tr>
@@ -112,25 +144,35 @@ def generate_html_report(
                 "BLOCKED", "CONTAINED"
             )
             badge = "badge-success" if is_abl_safe else "badge-danger"
-            abl_outcome = abl.final_security_outcome.value
+            abl_outcome = sanitize_html_text(abl.final_security_outcome.value)
+            abl_sc_id = sanitize_html_text(abl.scenario_id)
+            cond_safe = sanitize_html_text(abl.condition.value)
+            blast_safe = sanitize_html_text(abl.blast_radius.value)
             row = f"""
             <tr>
-                <td><code>{abl.scenario_id}</code></td>
-                <td><code>{abl.condition.value}</code></td>
+                <td><code>{abl_sc_id}</code></td>
+                <td><code>{cond_safe}</code></td>
                 <td><span class="badge {badge}">{abl_outcome}</span></td>
                 <td>{'Yes' if abl.objective_achieved else 'No'}</td>
-                <td><code>{abl.blast_radius.value}</code></td>
+                <td><code>{blast_safe}</code></td>
                 <td>{abl.latency_ms:.1f} ms</td>
             </tr>
             """
             ablation_rows.append(row)
+
+    run_id_safe = sanitize_html_text(meta.run_id)
+    contract_ver_safe = sanitize_html_text(meta.benchmark_contract_version)
+    timestamp_safe = sanitize_html_text(meta.timestamp)
+    os_safe = sanitize_html_text(meta.os_version)
+    python_safe = sanitize_html_text(meta.python_version)
+    mode_safe = sanitize_html_text(meta.validation_mode)
 
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AegisAgent Benchmark Report - {meta.run_id}</title>
+    <title>AegisAgent Benchmark Report - {run_id_safe}</title>
     <style>
         :root {{
             --bg: #0f172a;
@@ -198,9 +240,9 @@ def generate_html_report(
 <body>
     <div class="container">
         <header>
-            <h1>AegisAgent Benchmark Report (Contract v{meta.benchmark_contract_version})</h1>
+            <h1>AegisAgent Benchmark Report (Contract v{contract_ver_safe})</h1>
             <div class="meta">
-                Run ID: <code>{meta.run_id}</code> &bull; Timestamp: {meta.timestamp} &bull; OS: {meta.os_version} &bull; Python: {meta.python_version} &bull; Mode: {meta.validation_mode}
+                Run ID: <code>{run_id_safe}</code> &bull; Timestamp: {timestamp_safe} &bull; OS: {os_safe} &bull; Python: {python_safe} &bull; Mode: {mode_safe}
             </div>
         </header>
 
@@ -250,7 +292,7 @@ def generate_html_report(
                 <tr>
                     <th>Scenario</th>
                     <th>Outcome</th>
-                    <th>Task Success</th>
+                    <th>Task Successful</th>
                     <th>Latency</th>
                 </tr>
             </thead>
@@ -259,15 +301,14 @@ def generate_html_report(
             </tbody>
         </table>
 
-        {f'''
-        <h2 class="section-title">Single-Control Ablation Analysis</h2>
+        <h2 class="section-title">Ablation Studies ({sum(len(v) for v in result.ablation_attempts.values())} conditions)</h2>
         <table>
             <thead>
                 <tr>
                     <th>Scenario</th>
-                    <th>Ablation Condition</th>
-                    <th>Outcome</th>
-                    <th>Obj Achieved</th>
+                    <th>Condition</th>
+                    <th>Security Outcome</th>
+                    <th>Objective Achieved</th>
                     <th>Blast Radius</th>
                     <th>Latency</th>
                 </tr>
@@ -276,63 +317,11 @@ def generate_html_report(
                 {''.join(ablation_rows)}
             </tbody>
         </table>
-        ''' if ablation_rows else ''}
     </div>
 </body>
 </html>
 """
-
-    out_file = Path(output_path)
-    out_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_file, "w", encoding="utf-8") as f:
+    out_p = Path(output_path)
+    out_p.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_p, "w", encoding="utf-8") as f:
         f.write(html_content)
-
-
-def print_terminal_summary(result: "BenchmarkRunResult") -> None:
-    """Prints a formatted summary table to the terminal."""
-    m = result.summary_metrics
-    meta = result.metadata
-
-    asr_base = (
-        f"{(m.asr_baseline or 0.0) * 100:.1f}%"
-        if m.asr_baseline is not None else "N/A"
-    )
-    asr_aegis = (
-        f"{(m.asr_aegis or 0.0) * 100:.1f}%"
-        if m.asr_aegis is not None else "N/A"
-    )
-    asr_red = (
-        f"{(m.asr_reduction or 0.0) * 100:.1f}%"
-        if m.asr_reduction is not None else "N/A"
-    )
-    cont = (
-        f"{(m.containment_rate or 0.0) * 100:.1f}%"
-        if m.containment_rate is not None else "N/A"
-    )
-    fpr = (
-        f"{(m.fpr or 0.0) * 100:.1f}%"
-        if m.fpr is not None else "0.0%"
-    )
-
-    print("\n" + "=" * 70)
-    print(f"AEGIS BENCHMARK RUN COMPLETE [Run ID: {meta.run_id}]")
-    print("=" * 70)
-    print(
-        f"Contract: v{meta.benchmark_contract_version} | "
-        f"Mode: {meta.validation_mode} | Seed: {meta.random_seed}"
-    )
-    print(
-        f"Scenarios: {m.total_scenarios} ({m.valid_scenarios} valid) | "
-        f"Attempts: {m.total_attempts}"
-    )
-    print("-" * 70)
-    print(f"Baseline ASR:           {asr_base}")
-    print(f"Aegis Full ASR:         {asr_aegis}")
-    print(f"ASR Reduction:          {asr_red}")
-    print(f"Containment Rate:       {cont}")
-    print(f"Benign FPR:             {fpr}")
-    print(
-        f"Latency P50 / P95:      {m.latency_p50_ms:.1f}ms / "
-        f"{m.latency_p95_ms:.1f}ms"
-    )
-    print("=" * 70 + "\n")

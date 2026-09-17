@@ -1,13 +1,13 @@
 """End-to-end execution script for the Advanced Evaluation Layer suite.
 
-Executes all 7 advanced evaluation studies with strict experiment isolation:
-1. Adaptive Red-Team Evaluation (results/advanced_eval/adaptive/)
-2. Repeated Trials Study (results/advanced_eval/repeated/)
-3. Container Runtime Boundary Verification (results/advanced_eval/container/)
-4. Cross-Version Regression Comparator (results/advanced_eval/regression/)
-5. Residual Risk Experiments (results/advanced_eval/residual_risks/)
-6. Component Latency Profiling (results/advanced_eval/performance/)
-7. Demonstration Trace Generation (results/advanced_eval/demo/)
+Executes all advanced evaluation studies with strict experiment isolation:
+1. Adaptive Red-Team Evaluation (results/advanced_eval_final/)
+2. Repeated Trials Study (results/repeated_trials_final/)
+3. Container Runtime Boundary Verification (results/container_final/)
+4. Cross-Version Regression Comparator (results/regression_final/)
+5. Residual Risk Experiments (results/residual_risks_final/)
+6. Component Latency Profiling (results/performance_final/)
+7. Demonstration Trace Generation (results/advanced_eval_final/demo/)
 """
 
 from dataclasses import asdict
@@ -15,10 +15,13 @@ import json
 import logging
 from pathlib import Path
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from evals.benchmark.adaptive_redteam import (
     AdaptiveRedTeamEngine,
+)
+from evals.benchmark.artifacts import (
+    generate_manifest,
 )
 from evals.benchmark.container_runtime import (
     ContainerSecurityProfile,
@@ -50,33 +53,51 @@ logger = logging.getLogger("advanced_eval_suite")
 
 
 def run_all_advanced_evaluations(
-    output_base_dir: str = "results/advanced_eval",
+    adaptive_dir_path: str = "results/advanced_eval_final",
+    repeated_dir_path: str = "results/repeated_trials_final",
+    container_dir_path: str = "results/container_final",
+    regression_dir_path: str = "results/regression_final",
+    residual_dir_path: str = "results/residual_risks_final",
+    performance_dir_path: str = "results/performance_final",
 ) -> Dict[str, Any]:
-    """Executes the complete advanced evaluation methodology suite."""
-    base_path = Path(output_base_dir)
-    base_path.mkdir(parents=True, exist_ok=True)
+    """Executes the complete hardened advanced evaluation methodology suite."""
+    adaptive_dir = Path(adaptive_dir_path)
+    repeated_dir = Path(repeated_dir_path)
+    container_dir = Path(container_dir_path)
+    regression_dir = Path(regression_dir_path)
+    residual_dir = Path(residual_dir_path)
+    perf_dir = Path(performance_dir_path)
+
+    for d in [
+        adaptive_dir,
+        repeated_dir,
+        container_dir,
+        regression_dir,
+        residual_dir,
+        perf_dir,
+    ]:
+        d.mkdir(parents=True, exist_ok=True)
 
     suite_summary: Dict[str, Any] = {
-        "suite_name": "AegisAgent Advanced Evaluation Layer",
+        "suite_name": "AegisAgent Advanced Evaluation Layer (Hardened)",
         "timestamp": time.time(),
         "experiments_completed": [],
     }
+
+    all_attacks = load_attack_corpus(subset="full")
+    harness = InstrumentedSyntheticSinkHarness()
+    agent = AegisBenchmarkAgent(harness)
 
     # ========================================================================
     # 1. Adaptive Red-Team Evaluation
     # ========================================================================
     logger.info("=== Starting 1. Adaptive Red-Team Evaluation ===")
-    adaptive_dir = base_path / "adaptive"
-    adaptive_dir.mkdir(parents=True, exist_ok=True)
-
-    all_attacks = load_attack_corpus(subset="full")
-    # Select representative adversarial scenarios across attack families
     sample_ids = [
-        "ATK-001",  # Prompt Injection Direct
-        "ATK-010",  # Jailbreak Roleplay
-        "ATK-024",  # Misleading Tool Capability Smuggling
-        "ATK-036",  # MCP Schema Poisoning
-        "ATK-044",  # Multimodal ASCII Smuggling
+        "ATK-001",
+        "ATK-010",
+        "ATK-024",
+        "ATK-036",
+        "ATK-044",
     ]
     adaptive_scenarios = [s for s in all_attacks if s.scenario_id in sample_ids]
     if not adaptive_scenarios:
@@ -88,8 +109,6 @@ def run_all_advanced_evaluations(
         timeout_seconds=30.0,
         random_seed=42,
     )
-    harness = InstrumentedSyntheticSinkHarness()
-    agent = AegisBenchmarkAgent(harness)
 
     adaptive_summary = engine.evaluate_adaptive_corpus(
         adaptive_scenarios, harness, agent
@@ -97,7 +116,6 @@ def run_all_advanced_evaluations(
     adaptive_dict = asdict(adaptive_summary)
 
     with open(adaptive_dir / "summary.json", "w", encoding="utf-8") as f:
-        # Exclude detailed trajectories from summary for readability
         summ_copy = dict(adaptive_dict)
         summ_copy.pop("trajectories", None)
         json.dump(summ_copy, f, indent=2)
@@ -106,20 +124,25 @@ def run_all_advanced_evaluations(
         for traj in adaptive_dict.get("trajectories", []):
             f.write(json.dumps(traj) + "\n")
 
+    generate_manifest(
+        str(adaptive_dir),
+        stage="FINAL",
+        run_id=adaptive_summary.run_id,
+    )
+
     logger.info(
-        f"Adaptive Red-Team completed: ASR={adaptive_summary.adaptive_asr:.2%}, "
-        f"Paths={adaptive_summary.unique_attack_paths_count}, "
-        f"Entropy={adaptive_summary.normalized_path_entropy:.3f}"
+        f"Adaptive Red-Team completed: Observed ASR="
+        f"{adaptive_summary.observed_adaptive_asr:.2%}, "
+        f"Inconclusive Rate={adaptive_summary.inconclusive_rate:.2%}, "
+        f"Conservative ASR="
+        f"{adaptive_summary.conservative_adaptive_success_rate:.2%}"
     )
     suite_summary["experiments_completed"].append("ADAPTIVE_REDTEAM")
 
     # ========================================================================
-    # 2. Repeated Trials Study
+    # 2. Repeated Trials Study (5 Trials)
     # ========================================================================
     logger.info("=== Starting 2. Repeated Trials Study (5 Trials) ===")
-    repeated_dir = base_path / "repeated"
-    repeated_dir.mkdir(parents=True, exist_ok=True)
-
     trial_runner = RepeatedTrialRunner(num_trials=5, base_seed=1000)
     rep_summary = trial_runner.run_repeated_trials(all_attacks)
     rep_dict = asdict(rep_summary)
@@ -133,10 +156,16 @@ def run_all_advanced_evaluations(
         for obs in rep_dict.get("observations", []):
             f.write(json.dumps(obs) + "\n")
 
+    generate_manifest(
+        str(repeated_dir),
+        stage="FINAL",
+        run_id=rep_summary.run_id,
+    )
+
     logger.info(
         f"Repeated Trials completed: Baseline ASR={rep_summary.baseline_asr_mean:.2%} "
         f"CI={rep_summary.baseline_asr_ci_95}, Aegis ASR={rep_summary.aegis_asr_mean:.2%} "
-        f"CI={rep_summary.aegis_asr_ci_95}, McNemar p={rep_summary.mcnemar_test.get('p_value')}"
+        f"CI={rep_summary.aegis_asr_ci_95}, McNemar p={rep_summary.mcnemar_test.get('p_value_formatted')}"
     )
     suite_summary["experiments_completed"].append("REPEATED_TRIAL")
 
@@ -144,15 +173,11 @@ def run_all_advanced_evaluations(
     # 3. Container Runtime Boundary Verification
     # ========================================================================
     logger.info("=== Starting 3. Container Runtime Boundary Verification ===")
-    container_dir = base_path / "container"
-    container_dir.mkdir(parents=True, exist_ok=True)
-
     container_harness = ContainerizedRuntimeHarness(
         profile=ContainerSecurityProfile(user="1000:1000", read_only_rootfs=True)
     )
     container_meta = container_harness.get_runtime_metadata()
 
-    # Execute representative test commands
     commands_to_test = [
         ("echo 'healthy'", "read_only_probe"),
         ("touch /var/test.txt", "unauthorized_write_attempt"),
@@ -174,6 +199,12 @@ def run_all_advanced_evaluations(
     with open(container_dir / "results.json", "w", encoding="utf-8") as f:
         json.dump(container_results, f, indent=2)
 
+    generate_manifest(
+        str(container_dir),
+        stage="FINAL",
+        run_id="container_boundary_check",
+    )
+
     logger.info(
         f"Container runtime verified. Mode: {container_meta.get('runtime_type')}, "
         f"Isolation Claim: {container_meta.get('isolation_claim')}"
@@ -184,9 +215,6 @@ def run_all_advanced_evaluations(
     # 4. Cross-Version Regression Comparator
     # ========================================================================
     logger.info("=== Starting 4. Cross-Version Regression Comparator ===")
-    regression_dir = base_path / "regression"
-    regression_dir.mkdir(parents=True, exist_ok=True)
-
     comparator = CrossVersionComparator()
     pre_dir = "results/full_run_pre_remediation"
     final_dir = "results/final_full_run"
@@ -197,6 +225,11 @@ def run_all_advanced_evaluations(
             regression_dir / "regression_report.json", "w", encoding="utf-8"
         ) as f:
             json.dump(asdict(report), f, indent=2)
+        generate_manifest(
+            str(regression_dir),
+            stage="FINAL",
+            run_id="regression_v1_vs_v2",
+        )
         logger.info(
             f"Regression comparison complete: verdict={report.overall_verdict}, "
             f"compatibility={report.compatibility.status_label}"
@@ -213,9 +246,6 @@ def run_all_advanced_evaluations(
     # 5. Residual Risk Experiments
     # ========================================================================
     logger.info("=== Starting 5. Residual Risk Experiments ===")
-    residual_dir = base_path / "residual_risks"
-    residual_dir.mkdir(parents=True, exist_ok=True)
-
     risk_evaluator = ResidualRiskEvaluator(seed=42)
     risk_report = risk_evaluator.execute_all_residual_risk_studies(harness, agent)
 
@@ -224,6 +254,12 @@ def run_all_advanced_evaluations(
     ) as f:
         json.dump(asdict(risk_report), f, indent=2)
 
+    generate_manifest(
+        str(residual_dir),
+        stage="FINAL",
+        run_id=risk_report.run_id,
+    )
+
     logger.info("Residual risk studies complete. Saved residual_risk_report.json")
     suite_summary["experiments_completed"].append("RESIDUAL_RISK")
 
@@ -231,14 +267,11 @@ def run_all_advanced_evaluations(
     # 6. Component Latency Profiling
     # ========================================================================
     logger.info("=== Starting 6. Component Latency Profiling ===")
-    perf_dir = base_path / "performance"
-    perf_dir.mkdir(parents=True, exist_ok=True)
-
     profiler = ComponentLatencyProfiler(
         warmup_runs=5,
-        measurement_runs=25,
-        neural_warmup_runs=2,
-        neural_measurement_runs=10,
+        measurement_runs=50,
+        neural_warmup_runs=5,
+        neural_measurement_runs=50,
     )
     profiles = profiler.run_all_profiles()
     profiler.export_csv(profiles, str(perf_dir / "component_latency.csv"))
@@ -249,6 +282,12 @@ def run_all_advanced_evaluations(
     with open(perf_dir / "profiles.json", "w", encoding="utf-8") as f:
         json.dump(profiles, f, indent=2)
 
+    generate_manifest(
+        str(perf_dir),
+        stage="FINAL",
+        run_id="perf_profiling_50_samples",
+    )
+
     logger.info("Component latency profiling complete. Exported CSV & JSON.")
     suite_summary["experiments_completed"].append("PERFORMANCE_STUDY")
 
@@ -256,7 +295,7 @@ def run_all_advanced_evaluations(
     # 7. Demonstration Trace Generation
     # ========================================================================
     logger.info("=== Starting 7. Demonstration Trace Generation ===")
-    demo_dir = base_path / "demo"
+    demo_dir = adaptive_dir / "demo"
     demo_dir.mkdir(parents=True, exist_ok=True)
 
     demo_engine = DemonstrationTraceEngine()
@@ -271,10 +310,6 @@ def run_all_advanced_evaluations(
 
     logger.info("Demonstration traces generated and rendered to demo_trace.md")
     suite_summary["experiments_completed"].append("DEMO_TRACES")
-
-    # Save overall suite manifest
-    with open(base_path / "suite_manifest.json", "w", encoding="utf-8") as f:
-        json.dump(suite_summary, f, indent=2)
 
     logger.info("=== All Advanced Evaluation Experiments Completed Successfully ===")
     return suite_summary
