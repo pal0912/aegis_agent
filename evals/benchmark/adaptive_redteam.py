@@ -235,6 +235,7 @@ class AdaptiveRedTeamSummary:
 
     experiment_id: str
     run_id: str
+    observation_model: str
     scenario_count: int
     total_adaptive_attempts: int
     successful_trajectories: int
@@ -500,10 +501,24 @@ class AdaptiveRedTeamEngine:
         self.rng = random.Random(random_seed)
         self.pivoter = AdaptiveStrategyPivoter(self.rng)
         self.budget_manager = budget_manager or GlobalExperimentBudgetManager()
-        self.observation_model = observation_model
+        self.observation_model = (
+            observation_model
+            if isinstance(observation_model, ObservationModel)
+            else ObservationModel(observation_model)
+        )
 
     def _diagnose_feedback(self, attempt: AttemptResult) -> str:
         """Extracts diagnostic feedback identifying the blocking control."""
+        if self.observation_model == ObservationModel.BLACK_BOX:
+            if attempt.objective_achieved:
+                return "BLACK_BOX_OBJECTIVE_ACHIEVED"
+            if (
+                hasattr(attempt.evidence, "error_message")
+                and attempt.evidence.error_message
+            ):
+                return "BLACK_BOX_EXECUTION_ERROR"
+            return "BLACK_BOX_EXECUTION_FAILED"
+
         ctrls = attempt.controls
         if ctrls.detector in ("BLOCKED", "TRIGGERED"):
             return "INGRESS_DETECTOR_TRIGGERED"
@@ -556,6 +571,29 @@ class AdaptiveRedTeamEngine:
             mutation_type = "ORIGINAL_VECTOR"
             mutation_algo = "NONE"
             current_payload = original_scenario.attack_payload or ""
+            current_args = {"command": current_payload}
+        elif feedback.startswith("BLACK_BOX"):
+            choice = turn_idx % 4
+            if choice == 0:
+                mutation_algo = "UNICODE_HOMOGLYPH"
+                mutation_type = "UNICODE_HOMOGLYPH"
+                encoding_name = "CYRILLIC_HOMOGLYPH"
+            elif choice == 1:
+                mutation_algo = "CONTEXT_PADDING"
+                mutation_type = "CONTEXT_PADDING"
+                encoding_name = "PROSE_DISPLACEMENT"
+            elif choice == 2:
+                mutation_algo = "HEX_ENCODING"
+                mutation_type = "HEX_ENCODING"
+                encoding_name = "HEX_WRAPPED"
+            else:
+                mutation_algo = "ZERO_WIDTH_STEGANOGRAPHY"
+                mutation_type = "ZERO_WIDTH_STEGANOGRAPHY"
+                encoding_name = "ZW_INTERLEAVE"
+
+            current_payload = self.pivoter.mutate(
+                current_payload, mutation_algo, mutation_params, seed
+            )
             current_args = {"command": current_payload}
         elif feedback == "INGRESS_DETECTOR_TRIGGERED":
             choice = turn_idx % 4
@@ -966,6 +1004,7 @@ class AdaptiveRedTeamEngine:
         return AdaptiveRedTeamSummary(
             experiment_id="ADAPTIVE_REDTEAM",
             run_id=run_id,
+            observation_model=self.observation_model.value,
             scenario_count=total_trajectories,
             total_adaptive_attempts=total_turns,
             successful_trajectories=successful_bypasses,

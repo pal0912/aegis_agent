@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 
 from evals.benchmark.adaptive_redteam import (
     AdaptiveRedTeamEngine,
+    ObservationModel,
 )
 from evals.benchmark.artifacts import (
     generate_manifest,
@@ -89,9 +90,9 @@ def run_all_advanced_evaluations(
     agent = AegisBenchmarkAgent(harness)
 
     # ========================================================================
-    # 1. Adaptive Red-Team Evaluation
+    # 1. Adaptive Red-Team Evaluation (Black-Box & Privileged Separate)
     # ========================================================================
-    logger.info("=== Starting 1. Adaptive Red-Team Evaluation ===")
+    logger.info("=== Starting 1. Adaptive Red-Team (Black-Box & Privileged) ===")
     sample_ids = [
         "ATK-001",
         "ATK-010",
@@ -99,43 +100,79 @@ def run_all_advanced_evaluations(
         "ATK-036",
         "ATK-044",
     ]
-    adaptive_scenarios = [s for s in all_attacks if s.scenario_id in sample_ids]
+    adaptive_scenarios = [
+        s for s in all_attacks if s.scenario_id in sample_ids
+    ]
     if not adaptive_scenarios:
         adaptive_scenarios = all_attacks[:5]
 
-    engine = AdaptiveRedTeamEngine(
+    # 1a. Black-Box Adaptive Red-Team
+    engine_bbox = AdaptiveRedTeamEngine(
         max_turns=5,
         mutation_budget=10,
         timeout_seconds=30.0,
         random_seed=42,
+        observation_model=ObservationModel.BLACK_BOX,
     )
-
-    adaptive_summary = engine.evaluate_adaptive_corpus(
+    bbox_summary = engine_bbox.evaluate_adaptive_corpus(
         adaptive_scenarios, harness, agent
     )
-    adaptive_dict = asdict(adaptive_summary)
+    bbox_dict = asdict(bbox_summary)
 
-    with open(adaptive_dir / "summary.json", "w", encoding="utf-8") as f:
-        summ_copy = dict(adaptive_dict)
+    bbox_dir = Path("results/advanced_eval_final/black_box")
+    for target_dir in [adaptive_dir, bbox_dir]:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        with open(target_dir / "summary.json", "w", encoding="utf-8") as f:
+            summ_copy = dict(bbox_dict)
+            summ_copy.pop("trajectories", None)
+            json.dump(summ_copy, f, indent=2)
+
+        with open(
+            target_dir / "trajectories.jsonl", "w", encoding="utf-8"
+        ) as f:
+            for traj in bbox_dict.get("trajectories", []):
+                f.write(json.dumps(traj) + "\n")
+
+        generate_manifest(
+            str(target_dir),
+            stage="FINAL",
+            run_id=bbox_summary.run_id,
+        )
+
+    # 1b. Privileged Security Feedback Adaptive Red-Team
+    engine_priv = AdaptiveRedTeamEngine(
+        max_turns=5,
+        mutation_budget=10,
+        timeout_seconds=30.0,
+        random_seed=42,
+        observation_model=ObservationModel.PRIVILEGED_SECURITY_FEEDBACK,
+    )
+    priv_summary = engine_priv.evaluate_adaptive_corpus(
+        adaptive_scenarios, harness, agent
+    )
+    priv_dict = asdict(priv_summary)
+
+    priv_dir = Path("results/advanced_eval_final/privileged")
+    priv_dir.mkdir(parents=True, exist_ok=True)
+    with open(priv_dir / "summary.json", "w", encoding="utf-8") as f:
+        summ_copy = dict(priv_dict)
         summ_copy.pop("trajectories", None)
         json.dump(summ_copy, f, indent=2)
 
-    with open(adaptive_dir / "trajectories.jsonl", "w", encoding="utf-8") as f:
-        for traj in adaptive_dict.get("trajectories", []):
+    with open(priv_dir / "trajectories.jsonl", "w", encoding="utf-8") as f:
+        for traj in priv_dict.get("trajectories", []):
             f.write(json.dumps(traj) + "\n")
 
     generate_manifest(
-        str(adaptive_dir),
+        str(priv_dir),
         stage="FINAL",
-        run_id=adaptive_summary.run_id,
+        run_id=priv_summary.run_id,
     )
 
     logger.info(
-        f"Adaptive Red-Team completed: Observed ASR="
-        f"{adaptive_summary.observed_adaptive_asr:.2%}, "
-        f"Inconclusive Rate={adaptive_summary.inconclusive_rate:.2%}, "
-        f"Conservative ASR="
-        f"{adaptive_summary.conservative_adaptive_success_rate:.2%}"
+        f"Adaptive Red-Team completed: Black-Box Observed ASR="
+        f"{bbox_summary.observed_adaptive_asr:.2%}, Privileged Observed ASR="
+        f"{priv_summary.observed_adaptive_asr:.2%}"
     )
     suite_summary["experiments_completed"].append("ADAPTIVE_REDTEAM")
 
