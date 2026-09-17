@@ -116,6 +116,12 @@ class IsolatedCodeSandbox:
         "input",
         "memoryview",
         "bytearray",
+        "system",
+        "popen",
+        "spawn",
+        "call",
+        "check_output",
+        "run",
     }
 
     def __init__(self, default_timeout_sec: float = 5.0) -> None:
@@ -138,10 +144,29 @@ class IsolatedCodeSandbox:
         if not code or not code.strip():
             return True, None
 
+        lower_code = code.lower()
+        if any(
+            tok in lower_code
+            for tok in ("rm -rf", "| bash", "| sh", "$(", "`")
+        ):
+            return (
+                False,
+                "Shell command or pipe execution detected in code payload",
+            )
+
         try:
             tree = ast.parse(code)
         except SyntaxError as e:
-            return False, f"AST Parse Error: Invalid Python syntax at line {e.lineno}: {e.msg}"
+            # Check if this syntax error is caused by shell syntax
+            if any(
+                w in lower_code
+                for w in ("cat ", "ls ", "echo ", "curl ", "rm ", "chmod ")
+            ):
+                return False, f"Shell command execution rejected: '{code}'"
+            return (
+                False,
+                f"AST Parse Error: Invalid Python syntax at line {e.lineno}: {e.msg}",
+            )
         except Exception as e:
             return False, f"AST Parse Error: {e}"
 
@@ -160,7 +185,10 @@ class IsolatedCodeSandbox:
                     if root_pkg in self.BANNED_MODULES:
                         return False, f"Banned module from-import detected: '{node.module}'"
                 for alias in node.names:
-                    if alias.name in self.BANNED_MODULES or alias.name in self.BANNED_CALLS_AND_ATTRS:
+                    if (
+                        alias.name in self.BANNED_MODULES
+                        or alias.name in self.BANNED_CALLS_AND_ATTRS
+                    ):
                         return False, f"Banned symbol imported: '{alias.name}'"
 
             # Check direct function calls (e.g., eval(), exec(), __import__())

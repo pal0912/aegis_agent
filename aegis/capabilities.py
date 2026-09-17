@@ -5,7 +5,6 @@ deterministic containment boundaries under tainted session states.
 """
 
 import logging
-import re
 from typing import Any, Dict, Optional, Set
 
 from aegis.types import Capability
@@ -55,6 +54,7 @@ class CapabilityRegistry:
         "send_slack_message": Capability.SEND_EXTERNAL_MESSAGE,
         "send_sms": Capability.SEND_EXTERNAL_MESSAGE,
         "trigger_webhook": Capability.SEND_EXTERNAL_MESSAGE,
+        "send_inter_agent": Capability.SEND_EXTERNAL_MESSAGE,
         # Outbound Network & HTTP
         "http_request": Capability.NETWORK_EXTERNAL,
         "fetch_url": Capability.NETWORK_EXTERNAL,
@@ -84,8 +84,10 @@ class CapabilityRegistry:
         Capability.READ_PRIVATE,
     }
 
-    def __init__(self, custom_mappings: Optional[Dict[str, Capability]] = None) -> None:
-        """Initialize capability registry with default and optional custom mappings."""
+    def __init__(
+        self, custom_mappings: Optional[Dict[str, Capability]] = None
+    ) -> None:
+        """Initialize registry with default and optional custom mappings."""
         self.mappings: Dict[str, Capability] = dict(self.DEFAULT_TOOL_MAPPINGS)
         self.manifests: Dict[str, Dict[str, Any]] = {}
         if custom_mappings:
@@ -97,7 +99,7 @@ class CapabilityRegistry:
         capability: Capability,
         manifest: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Register or override a capability mapping and optional security manifest for a tool."""
+        """Register or override a capability mapping and security manifest."""
         norm_name = tool_name.lower().strip()
         self.mappings[norm_name] = capability
         if manifest:
@@ -107,38 +109,154 @@ class CapabilityRegistry:
         """Retrieve security manifest for a registered tool if present."""
         return self.manifests.get(tool_name.lower().strip())
 
-    def infer_capability(self, tool_name: str, arguments: Optional[Dict[str, Any]] = None) -> Capability:
-        """Infer operational capability for a tool invocation based on name and arguments.
+    @staticmethod
+    def inspect_argument_code_risk(
+        arguments: Optional[Dict[str, Any]]
+    ) -> bool:
+        """Recursively inspect arguments for code execution or shell commands."""
+        import ast
 
-        Args:
-            tool_name: Name of the tool to be invoked.
-            arguments: Tool parameters and payload dictionary.
+        if not arguments:
+            return False
 
-        Returns:
-            Inferred Capability enum value (Capability.UNKNOWN if unclassified).
+        dangerous_tokens = (
+            "__import__",
+            "os.system",
+            "subprocess",
+            "shutil",
+            "eval(",
+            "exec(",
+            "compile(",
+            "open(",
+            "__builtins__",
+            "__subclasses__",
+            "__globals__",
+            "__code__",
+            "getattr(",
+            "setattr(",
+            "system(",
+            "popen(",
+            "rm -rf",
+            "| bash",
+            "| sh",
+            "$(",
+            "`",
+        )
+
+        def _check_val(val: Any) -> bool:
+            if isinstance(val, str):
+                lower_v = val.lower()
+                if any(tok in lower_v for tok in dangerous_tokens):
+                    return True
+                if any(
+                    k in lower_v
+                    for k in ("import", "system", "exec", "eval", "lambda", ";")
+                ):
+                    try:
+                        tree = ast.parse(val)
+                        for node in ast.walk(tree):
+                            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                                return True
+                            if isinstance(node, ast.Call):
+                                if isinstance(node.func, ast.Name) and (
+                                    node.func.id in {
+                                        "eval",
+                                        "exec",
+                                        "__import__",
+                                        "open",
+                                        "compile",
+                                        "system",
+                                        "getattr",
+                                        "setattr",
+                                    }
+                                ):
+                                    return True
+                                if isinstance(node.func, ast.Attribute) and (
+                                    node.func.attr in {
+                                        "system",
+                                        "popen",
+                                        "spawn",
+                                        "call",
+                                        "check_output",
+                                        "run",
+                                    }
+                                ):
+                                    return True
+                    except Exception:
+                        pass
+            elif isinstance(val, dict):
+                return any(_check_val(v) for v in val.values())
+            elif isinstance(val, (list, tuple, set)):
+                return any(_check_val(item) for item in val)
+            return False
+
+        return _check_val(arguments)
+
+    def infer_capability(
+        self, tool_name: str, arguments: Optional[Dict[str, Any]] = None
+    ) -> Capability:
+        """Infer operational capability based on tool name and arguments.
+
+        Enforces execution-time capability binding: arguments attempting code
+        execution or destructive actions immediately elevate the capability
+        regardless of whether the tool name declared a harmless capability.
         """
         normalized_name = tool_name.lower().strip()
+        args = arguments or {}
+        arg_keys = set(k.lower() for k in args.keys())
 
-        # 1. Exact match in registered mappings
+        # 1. Dangerous code execution detection across arguments
+        # Tools declared as READ_PUBLIC must not smuggle arbitrary code execution.
+        if self.inspect_argument_code_risk(args):
+            logger.warning(
+                "CapabilityRegistry: Dangerous code pattern detected in args "
+                "for tool '%s'. Elevating to EXECUTE_CODE.",
+                tool_name,
+            )
+            return Capability.EXECUTE_CODE
+
+        # 2. Check tool manifest schema and parameter binding
+        manifest = self.get_tool_manifest(normalized_name)
+        if manifest:
+            allowed_params = manifest.get("allowed_parameters")
+            if allowed_params and not set(args.keys()).issubset(
+                set(allowed_params)
+            ):
+                logger.warning(
+                    "Manifest parameter mismatch for tool '%s'.", tool_name
+                )
+                return Capability.UNKNOWN
+
+        # 3. Exact match in registered mappings
         if normalized_name in self.mappings:
             return self.mappings[normalized_name]
 
-        args = arguments or {}
-        arg_keys = set(k.lower() for k in args.keys())
-        str_args = str(args).lower()
-
-        # 2. Dangerous / High-Risk Argument-based inference (takes precedence over benign tool name heuristics)
-        if any(k in arg_keys for k in ["command", "cmd", "script", "code", "bash_script"]):
+        # 4. Dangerous argument key heuristics
+        if any(
+            k in arg_keys
+            for k in ["command", "cmd", "script", "code", "bash_script"]
+        ):
             return Capability.EXECUTE_CODE
 
-        if any(k in arg_keys for k in ["amount", "recipient_account", "card_number", "wire_routing"]):
+        if any(
+            k in arg_keys
+            for k in [
+                "amount",
+                "recipient_account",
+                "card_number",
+                "wire_routing",
+            ]
+        ):
             return Capability.FINANCIAL_ACTION
 
         if "sql" in arg_keys or "sql_query" in arg_keys:
             sql_text = str(args.get("sql", args.get("sql_query", ""))).upper()
             if any(w in sql_text for w in ["DROP ", "ALTER ", "TRUNCATE "]):
                 return Capability.ADMIN
-            if any(w in sql_text for w in ["INSERT ", "UPDATE ", "DELETE ", "REPLACE "]):
+            if any(
+                w in sql_text
+                for w in ["INSERT ", "UPDATE ", "DELETE ", "REPLACE "]
+            ):
                 return Capability.WRITE_DATABASE
             return Capability.READ_PRIVATE
 
@@ -209,3 +327,6 @@ class CapabilityRegistry:
             True if permitted for tainted sessions (READ_PUBLIC only); False otherwise.
         """
         return capability == Capability.READ_PUBLIC
+
+
+inspect_argument_code_risk = CapabilityRegistry.inspect_argument_code_risk

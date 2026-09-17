@@ -24,8 +24,6 @@ from aegis.types import (
     PolicyDecision,
     PolicyVerdict,
     RestrictedExecutionPolicy,
-    ScanResult,
-    ToolCallProposal,
     TrustLevel,
 )
 
@@ -54,6 +52,177 @@ class MCPSecurityGuard:
         self.sanitizer = sanitizer or ContextSanitizer()
         self.audit_logger = audit_logger or AuditLogger.get_instance()
         self._url_regex = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+        self._tool_schemas: Dict[Tuple[str, str], Dict[str, Any]] = {
+            ("weather-service", "fetch_weather"): {
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string"},
+                    "units": {"type": "string"},
+                },
+                "required": ["location"],
+                "additionalProperties": False,
+            },
+            ("filesystem-service", "read_file"): {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                },
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+            ("metrics-service", "query_metrics"): {
+                "type": "object",
+                "properties": {
+                    "metric_name": {"type": "string"},
+                },
+                "required": ["metric_name"],
+                "additionalProperties": False,
+            },
+        }
+
+    def register_tool_schema(
+        self, server_name: str, tool_name: str, schema: Dict[str, Any]
+    ) -> None:
+        """Register an authorized schema for an MCP server tool."""
+        key = (server_name.lower().strip(), tool_name.lower().strip())
+        self._tool_schemas[key] = dict(schema)
+
+    def validate_parameters_against_schema(
+        self,
+        server_name: str,
+        tool_name: str,
+        arguments: Dict[str, Any],
+    ) -> Tuple[bool, str]:
+        """Validate arguments strictly against registered MCP tool schema.
+
+        Rejects undeclared fields, unexpected nested fields, wrong types,
+        malformed structures, and capability-inconsistent parameters.
+        """
+        s_name = server_name.lower().strip()
+        t_name = tool_name.lower().strip()
+        key = (s_name, t_name)
+
+        schema = self._tool_schemas.get(key)
+        if not schema:
+            for (s, t), sch in self._tool_schemas.items():
+                if t == t_name:
+                    schema = sch
+                    break
+
+        str_args = str(arguments).lower()
+        tamper_keywords = (
+            "replace_tool",
+            "modify_schema",
+            "update_schema",
+            "runtime_override",
+            "override_tool",
+        )
+        if any(k in str_args for k in tamper_keywords):
+            return (
+                False,
+                f"MCP_SCHEMA_MUTATION_REJECTED: Runtime modification of "
+                f"tool '{tool_name}' schema is forbidden.",
+            )
+
+        if not schema:
+            return True, "VALID_UNSCHEMAED"
+
+        properties = schema.get("properties", {})
+        additional_allowed = schema.get("additionalProperties", False)
+        required_fields = schema.get("required", [])
+
+        for req in required_fields:
+            if req not in arguments:
+                return (
+                    False,
+                    f"MCP_MISSING_REQUIRED_PARAM: Missing required field "
+                    f"'{req}' at '{server_name}.{tool_name}'",
+                )
+
+        def _validate_object(
+            obj: Any, prop_def: Dict[str, Any], path: str
+        ) -> Tuple[bool, str]:
+            if not isinstance(obj, dict):
+                return (
+                    False,
+                    f"MCP_MALFORMED_STRUCTURE: Expected object at '{path}', "
+                    f"got {type(obj).__name__}",
+                )
+
+            if not additional_allowed:
+                for arg_k in obj.keys():
+                    if arg_k not in prop_def:
+                        return (
+                            False,
+                            f"MCP_UNDECLARED_PARAMETER: Undeclared field "
+                            f"'{arg_k}' at '{path}' rejected by strict schema.",
+                        )
+
+            for p_name, p_rules in prop_def.items():
+                if p_name in obj:
+                    val = obj[p_name]
+                    exp_type = p_rules.get("type")
+                    if exp_type == "string" and not isinstance(val, str):
+                        return (
+                            False,
+                            f"MCP_TYPE_MISMATCH: Field '{path}.{p_name}' "
+                            f"expected string, got {type(val).__name__}",
+                        )
+                    if exp_type in ("integer", "number") and not isinstance(
+                        val, (int, float)
+                    ):
+                        return (
+                            False,
+                            f"MCP_TYPE_MISMATCH: Field '{path}.{p_name}' "
+                            f"expected number, got {type(val).__name__}",
+                        )
+                    if exp_type == "boolean" and not isinstance(val, bool):
+                        return (
+                            False,
+                            f"MCP_TYPE_MISMATCH: Field '{path}.{p_name}' "
+                            f"expected boolean, got {type(val).__name__}",
+                        )
+                    if exp_type == "array" and not isinstance(
+                        val, (list, tuple)
+                    ):
+                        return (
+                            False,
+                            f"MCP_TYPE_MISMATCH: Field '{path}.{p_name}' "
+                            f"expected array, got {type(val).__name__}",
+                        )
+                    if exp_type == "object" and isinstance(val, dict):
+                        nested_props = p_rules.get("properties", {})
+                        ok, msg = _validate_object(
+                            val, nested_props, f"{path}.{p_name}"
+                        )
+                        if not ok:
+                            return False, msg
+
+                    if isinstance(val, str):
+                        lower_val = val.lower()
+                        dangerous_cmds = (
+                            "cat /",
+                            "rm -rf",
+                            "; curl",
+                            "| bash",
+                            "chmod ",
+                            "wget ",
+                            "/etc/shadow",
+                            "/etc/passwd",
+                        )
+                        if any(tok in lower_val for tok in dangerous_cmds):
+                            return (
+                                False,
+                                f"MCP_CAPABILITY_INCONSISTENT_PARAMETER: "
+                                f"Command injection in parameter "
+                                f"'{p_name}': '{val}'",
+                            )
+
+            return True, "VALID"
+
+        return _validate_object(
+            arguments, properties, f"{server_name}.{tool_name}"
+        )
 
     def _extract_urls(self, obj: Any) -> List[str]:
         """Recursively find all URLs in input parameters."""
@@ -179,11 +348,38 @@ class MCPSecurityGuard:
                 )
                 return False, reason, arguments
 
-        # 1. DLP sanitization on parameters
+        # 1. Strict Server/Tool Registration & Parameter Schema Validation
+        # Validation must occur before parameter processing and execution dispatch.
+        is_schema_ok, schema_msg = self.validate_parameters_against_schema(
+            server_name=server_name,
+            tool_name=tool_name,
+            arguments=arguments,
+        )
+        if not is_schema_ok:
+            logger.warning(
+                "MCP Schema Violation: %s on tool '%s.%s'",
+                schema_msg,
+                server_name,
+                tool_name,
+            )
+            self._record_mcp_audit(
+                server_name=server_name,
+                tool_name=tool_name,
+                args=arguments,
+                session=session_context,
+                verdict=PolicyVerdict.BLOCK,
+                reason=schema_msg,
+                mitre_tags=[
+                    MitreAtlasTechnique.UNAUTHORIZED_COMMAND_EXECUTION.value
+                ],
+            )
+            return False, schema_msg, arguments
+
+        # 2. DLP sanitization on parameters
         sanitized_args, dlp_violations = self.dlp.sanitize_tool_args(arguments)
         is_tainted = session_context.is_session_tainted()
 
-        # 2. Capability inference & least-privilege boundary gating
+        # 3. Capability inference & least-privilege boundary gating
         inferred_cap = self.capability_registry.infer_capability(tool_name, sanitized_args)
 
         if val_scope is not None:
@@ -351,6 +547,7 @@ class MCPSecurityGuard:
                     r"\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER|CREATE|REPLACE|MERGE|GRANT|REVOKE|EXEC|EXECUTE|CALL)\b",
                     re.IGNORECASE,
                 )
+
                 def _extract_all_strings(val: Any) -> List[str]:
                     items: List[str] = []
                     if isinstance(val, str):

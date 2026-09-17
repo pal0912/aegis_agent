@@ -128,13 +128,19 @@ def export_run_artifacts(
                 ])
     paths["ablations"] = str(ablations_file)
 
-    # 7. latency.csv (11 components profiled)
+    # 7. latency.csv (explicit latency tiers profiled)
     latency_file = out_path / "latency.csv"
+    neural_meta_file = out_path / "latency_neural_metadata.json"
     from evals.benchmark.profiler import ComponentLatencyProfiler
-    profiler = ComponentLatencyProfiler(warmup_runs=5, measurement_runs=50)
+    profiler = ComponentLatencyProfiler(
+        warmup_runs=5, measurement_runs=50,
+        neural_warmup_runs=2, neural_measurement_runs=10
+    )
     profile_results = profiler.run_all_profiles()
     profiler.export_csv(profile_results, str(latency_file))
+    profiler.export_neural_metadata(profile_results, str(neural_meta_file))
     paths["latency"] = str(latency_file)
+    paths["latency_neural_metadata"] = str(neural_meta_file)
 
     # 8. report.html
     html_file = out_path / "report.html"

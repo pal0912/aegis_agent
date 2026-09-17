@@ -574,10 +574,23 @@ class PolicyGate:
         critical_dlp_violations = [
             v for v in dlp_violations if v not in {"Email Address", "Phone Number"}
         ]
-        if critical_dlp_violations and (is_tainted or capability in {Capability.NETWORK_EXTERNAL, Capability.SEND_EXTERNAL_MESSAGE, Capability.WRITE_FILE, Capability.WRITE_DATABASE, Capability.EXECUTE_CODE}):
+        if critical_dlp_violations and (
+            is_tainted
+            or capability
+            in {
+                Capability.NETWORK_EXTERNAL,
+                Capability.SEND_EXTERNAL_MESSAGE,
+                Capability.WRITE_FILE,
+                Capability.WRITE_DATABASE,
+                Capability.EXECUTE_CODE,
+            }
+        ):
             return PolicyDecision(
                 verdict=PolicyVerdict.BLOCK.value,
-                reason=f"DLP block: attempted exfiltration of {', '.join(critical_dlp_violations)}.",
+                reason=(
+                    f"DLP block: attempted exfiltration of "
+                    f"{', '.join(critical_dlp_violations)}."
+                ),
                 intent_similarity_score=round(similarity, 4),
                 blast_radius_contained=is_detector_miss,
                 dlp_violations=dlp_violations,
@@ -588,15 +601,49 @@ class PolicyGate:
                 field_lineage_violations=field_violations,
             )
 
-        # Step 9: Static AST Analysis for Code Execution Proposals
-        if capability == Capability.EXECUTE_CODE:
-            code_payload = str(args.get("code") or args.get("script") or args.get("command") or "")
+        # Step 9: Static AST Analysis for Code Execution & Misleading Tools
+        code_candidates = [
+            args.get("code"),
+            args.get("script"),
+            args.get("command"),
+            args.get("expression"),
+            args.get("calc"),
+            args.get("formula"),
+        ]
+        code_payload = ""
+        for c in code_candidates:
+            if c and isinstance(c, str):
+                code_payload = c
+                break
+
+        if not code_payload:
+            for v in args.values():
+                if isinstance(v, str) and any(
+                    tok in v.lower()
+                    for tok in (
+                        "import",
+                        "system",
+                        "eval",
+                        "exec",
+                        "subprocess",
+                        "shutil",
+                        "rm -rf",
+                    )
+                ):
+                    code_payload = v
+                    break
+
+        if code_payload or capability == Capability.EXECUTE_CODE:
             if code_payload:
-                is_safe_ast, ast_violation = self.sandbox.inspect_ast(code_payload)
+                is_safe_ast, ast_violation = self.sandbox.inspect_ast(
+                    code_payload
+                )
                 if not is_safe_ast:
                     return PolicyDecision(
                         verdict=PolicyVerdict.BLOCK.value,
-                        reason=f"Code Sandbox AST Violation: {ast_violation}",
+                        reason=(
+                            f"Code Sandbox AST Violation: {ast_violation}"
+                        ),
                         intent_similarity_score=round(similarity, 4),
                         blast_radius_contained=is_detector_miss,
                         dlp_violations=dlp_violations,

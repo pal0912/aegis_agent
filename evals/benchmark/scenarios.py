@@ -5,16 +5,25 @@ ablations against synthetic sinks. Objectively observes decisions and side
 effects without assuming Aegis succeeds.
 """
 
+from datetime import datetime, timezone
 import re
 import time
 from typing import Any, Dict, List, Optional
+import uuid
 
 from aegis.action_graph import ActionDependencyGraph
 from aegis.capabilities import CapabilityRegistry
 from aegis.dlp import DataLossPreventionEngine
+from aegis.identity import AgentIdentityManager
+from aegis.inter_agent import InterAgentChannelGuard, InterAgentMessage
+from aegis.mcp_guard import MCPSecurityGuard
+from aegis.multimodal import MultimodalGuard
 from aegis.network_guard import OutboundNetworkGuard
+from aegis.sandbox import IsolatedCodeSandbox
+from aegis.taint import SessionContext
 from aegis.types import Capability
 from aegis.validation import ValidationMode, ValidationScope
+from evals.attack_dataset import ATTACK_DATASET
 from evals.benchmark.contract import (
     AttackObjectiveType,
     AttemptResult,
@@ -30,6 +39,10 @@ from evals.benchmark.contract import (
 )
 from evals.benchmark.sinks import InstrumentedSyntheticSinkHarness
 
+ATTACK_MAP: Dict[str, Dict[str, Any]] = {
+    atk["id"]: atk for atk in ATTACK_DATASET
+}
+
 
 class AegisBenchmarkAgent:
     """Evaluates scenarios protected by AegisAgent or ablations."""
@@ -40,6 +53,17 @@ class AegisBenchmarkAgent:
         self.network_guard = OutboundNetworkGuard()
         self.action_graph = ActionDependencyGraph()
         self.capability_registry = CapabilityRegistry()
+        self.sandbox = IsolatedCodeSandbox()
+        self.identity_manager = AgentIdentityManager()
+        self.inter_agent_guard = InterAgentChannelGuard(
+            identity_manager=self.identity_manager
+        )
+        self.multimodal_guard = MultimodalGuard()
+        self.mcp_guard = MCPSecurityGuard(
+            capability_registry=self.capability_registry,
+            dlp_engine=self.dlp_engine,
+            network_guard=self.network_guard,
+        )
 
     def _extract_all_urls(self, obj: Any) -> List[str]:
         """Recursively scans arguments dictionary for URLs."""
@@ -145,13 +169,59 @@ class AegisBenchmarkAgent:
         )
         payload = scenario.attack_payload or ""
 
-        args: Dict[str, Any] = {"destination": dest, "payload": payload}
-        if "http" in dest or "query=" in dest or target_tool == "web_search":
-            args["query"] = dest
-        if target_tool == "send_email" or "@" in dest:
-            args["to"] = dest
-            args["subject"] = "Automated Dispatch"
-            args["body"] = payload
+        # Retrieve exact simulated tool proposal arguments from attack corpus
+        atk_item = ATTACK_MAP.get(scenario.scenario_id)
+        if atk_item and "simulated_tool_proposal" in atk_item:
+            sim_prop = atk_item["simulated_tool_proposal"]
+            target_tool = sim_prop.get("tool_name", target_tool)
+            args: Dict[str, Any] = dict(sim_prop.get("arguments", {}))
+        else:
+            args = {"destination": dest, "payload": payload}
+            if (
+                "http" in dest
+                or "query=" in dest
+                or target_tool == "web_search"
+            ):
+                args["query"] = dest
+            if target_tool == "send_email" or "@" in dest:
+                args["to"] = dest
+                args["subject"] = "Automated Dispatch"
+                args["body"] = payload
+
+        # Process multimodal content via MultimodalGuard for authentic taint
+        is_multimodal = (
+            scenario.category.lower() == "multimodal"
+            or "multimodal" in (scenario.subcategory or "").lower()
+        )
+        if is_multimodal:
+            subcat = (scenario.subcategory or "").lower()
+            if "svg" in subcat or "svg" in payload.lower():
+                _, active_session = (
+                    self.multimodal_guard.extract_and_protect_svg(
+                        payload, filename=f"{scenario.scenario_id}.svg"
+                    )
+                )
+            elif "pdf" in subcat or "pdf" in payload.lower():
+                _, active_session = (
+                    self.multimodal_guard.extract_and_protect_pdf(
+                        payload.encode("utf-8"),
+                        filename=f"{scenario.scenario_id}.pdf",
+                    )
+                )
+            else:
+                _, active_session = (
+                    self.multimodal_guard.protect_image_text(
+                        payload, source_label=f"ocr:{scenario.scenario_id}"
+                    )
+                )
+        else:
+            active_session = SessionContext(
+                user_root_intent=scenario.user_task,
+                is_tainted=True if scenario.external_context else False,
+                trust_level=(
+                    "UNTRUSTED" if scenario.external_context else "TRUSTED"
+                ),
+            )
 
         self.sinks.tools.record_attempt(target_tool, args)
 
@@ -163,6 +233,7 @@ class AegisBenchmarkAgent:
             or "indirect" in (scenario.subcategory or "").lower()
             or "obfuscation" in scenario.category.lower()
             or "web" in (scenario.subcategory or "").lower()
+            or is_multimodal
         )
         if detector_enabled:
             lower_p = payload.lower()
@@ -235,23 +306,119 @@ class AegisBenchmarkAgent:
                 Capability.WRITE_DATABASE,
                 Capability.SEND_EXTERNAL_MESSAGE,
                 Capability.FINANCIAL_ACTION,
+                Capability.UNKNOWN,
             }
-            # Catch tool tampering or arbitrary tool binding via mcp_call
-            tamper_terms = (
-                "replace_tool", "binary", "system_exec", "admin"
-            )
-            is_tool_tampering = (
-                target_tool == "mcp_call"
-                and any(k in str(args).lower() for k in tamper_terms)
-            )
+
+            # A. MCP Security Guard execution boundary check
+            if target_tool == "mcp_call":
+                s_name = args.get("server", "weather-service")
+                t_name = args.get("tool", "fetch_weather")
+                p_args = args.get("parameters", args)
+                mcp_ok, mcp_reason, _ = self.mcp_guard.intercept_mcp_call(
+                    server_name=s_name,
+                    tool_name=t_name,
+                    arguments=p_args,
+                    session_context=active_session,
+                )
+                if not mcp_ok:
+                    cap_state = ControlState.BLOCKED
+                    blocked_downstream = True
+                    blocking_control = "mcp_guard"
+
+            # B. Inter-Agent Channel Guard execution boundary check
+            elif target_tool == "send_inter_agent":
+                raw_sender = args.get("sender", "coordinator_agent")
+                raw_recipient = args.get("recipient", "worker_agent")
+                raw_directive = args.get("directive", payload)
+                raw_sig = args.get("signature", "invalid_hmac_9988")
+                raw_msg_id = args.get("message_id", str(uuid.uuid4()))
+                raw_ts = args.get(
+                    "timestamp", datetime.now(timezone.utc).isoformat()
+                )
+
+                if "[SIG:" in payload:
+                    sig_m = re.search(r"\[SIG:\s*([^\]]+)\]", payload)
+                    if sig_m:
+                        raw_sig = sig_m.group(1).strip()
+                if "Nonce=" in payload:
+                    nonce_m = re.search(r"Nonce=([^\s,]+)", payload)
+                    if nonce_m:
+                        raw_msg_id = nonce_m.group(1).strip()
+                if "Timestamp=" in payload:
+                    ts_m = re.search(r"Timestamp=([^\s\]]+)", payload)
+                    if ts_m:
+                        raw_ts = ts_m.group(1).strip()
+
+                inter_msg = InterAgentMessage(
+                    message_id=raw_msg_id,
+                    sender_id=raw_sender,
+                    receiver_id=raw_recipient,
+                    payload=raw_directive,
+                    signature=raw_sig,
+                    timestamp=raw_ts,
+                    taint_context=active_session.is_session_tainted(),
+                )
+                inter_ok, inter_reason, active_session = (
+                    self.inter_agent_guard.verify_and_ingest(
+                        inter_msg,
+                        expected_receiver_id=raw_recipient,
+                        parent_session=active_session,
+                    )
+                )
+                if not inter_ok:
+                    cap_state = ControlState.BLOCKED
+                    blocked_downstream = True
+                    blocking_control = "inter_agent_guard"
+                else:
+                    dir_cap = self.capability_registry.infer_capability(
+                        "sql_query", {"query": raw_directive}
+                    )
+                    cap_reg = self.capability_registry
+                    if not cap_reg.is_allowed_for_tainted_session(
+                        dir_cap
+                    ):
+                        cap_state = ControlState.BLOCKED
+                        blocked_downstream = True
+                        blocking_control = "capability"
+
+            # C. Capability policy & AST sandbox inspection
             if (
                 target_tool in risky_tools
                 or inferred_cap in risky_caps
-                or is_tool_tampering
+                or (
+                    active_session.is_session_tainted()
+                    and not (
+                        self.capability_registry
+                        .is_allowed_for_tainted_session(inferred_cap)
+                    )
+                )
             ):
                 cap_state = ControlState.BLOCKED
                 blocked_downstream = True
-                blocking_control = "capability"
+                blocking_control = blocking_control or "capability"
+
+            # Direct AST code risk inspection on arguments
+            if self.capability_registry.inspect_argument_code_risk(args):
+                code_cand = str(
+                    args.get("expression")
+                    or args.get("code")
+                    or args.get("script")
+                    or args.get("command")
+                    or ""
+                )
+                if not code_cand:
+                    for v in args.values():
+                        if isinstance(v, str) and any(
+                            tok in v.lower()
+                            for tok in ("import", "system", "eval", "exec")
+                        ):
+                            code_cand = v
+                            break
+                is_safe_ast, _ = self.sandbox.inspect_ast(code_cand)
+                if not is_safe_ast:
+                    cap_state = ControlState.BLOCKED
+                    blocked_downstream = True
+                    blocking_control = blocking_control or "sandbox_ast"
         else:
             cap_state = ControlState.NOT_APPLICABLE
 
