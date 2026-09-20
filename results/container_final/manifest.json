@@ -1,0 +1,20 @@
+{
+  "artifacts": {
+    "metadata.json": {
+      "filename": "metadata.json",
+      "sha256": "baeae0068742ba608ed0678ca8a6dc88f9540e4218c815495ce10f1e86dd0219",
+      "size_bytes": 758
+    },
+    "results.json": {
+      "filename": "results.json",
+      "sha256": "22bc31102bccfa3aac6d9a8b9ee7b4b459c68e8a3282fffffbcaa1697045b5f2",
+      "size_bytes": 4029
+    }
+  },
+  "contract_version": "1.0",
+  "filesystem_enforcement": "HARD",
+  "generated_timestamp": 1789919483.7080882,
+  "manifest_content_hash": "5fd3195851dc9dd67ddd2ec7a696c49d0672b1f033722498486d75c9b3d0e186",
+  "manifest_stage": "FINAL",
+  "run_id": "container_boundary_check"
+}

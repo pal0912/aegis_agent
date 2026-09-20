@@ -1,0 +1,96 @@
+{
+  "experiment_id": "CROSS_VERSION_REGRESSION",
+  "baseline_run_id": "run_aa8bdad9",
+  "baseline_commit": "11ec89733ca0f7bd9e22480fa74d63e7966ea0ef",
+  "current_run_id": "run_e1b97abb",
+  "current_commit": "7055e8000e850cac05a8788c539ab0eef4dff935",
+  "compatibility": {
+    "is_compatible": true,
+    "dataset_hash_match": true,
+    "contract_version_match": true,
+    "policy_hash_match": true,
+    "validation_mode_match": true,
+    "status_label": "FULLY_COMPATIBLE",
+    "warnings": []
+  },
+  "overall_verdict": "SECURITY_IMPROVEMENT",
+  "metric_evaluations": [
+    {
+      "metric_name": "asr_aegis",
+      "baseline_value": 0.09615384615384616,
+      "current_value": 0.0,
+      "absolute_delta": -0.096154,
+      "relative_change_pct": -100.0,
+      "is_regression": false,
+      "is_improvement": true,
+      "verdict": "IMPROVEMENT",
+      "rationale": "Decreased by -0.0962 (-100.0%), indicating security/performance gain."
+    },
+    {
+      "metric_name": "containment_rate",
+      "baseline_value": 0.9038461538461539,
+      "current_value": 1.0,
+      "absolute_delta": 0.096154,
+      "relative_change_pct": 10.64,
+      "is_regression": false,
+      "is_improvement": true,
+      "verdict": "IMPROVEMENT",
+      "rationale": "Increased by +0.0962, indicating improved containment."
+    },
+    {
+      "metric_name": "unauthorized_execution_rate",
+      "baseline_value": 0.09615384615384616,
+      "current_value": 0.0,
+      "absolute_delta": -0.096154,
+      "relative_change_pct": -100.0,
+      "is_regression": false,
+      "is_improvement": true,
+      "verdict": "IMPROVEMENT",
+      "rationale": "Decreased by -0.0962 (-100.0%), indicating security/performance gain."
+    },
+    {
+      "metric_name": "exfiltration_rate",
+      "baseline_value": 0.0,
+      "current_value": 0.0,
+      "absolute_delta": 0.0,
+      "relative_change_pct": 0.0,
+      "is_regression": false,
+      "is_improvement": false,
+      "verdict": "NOISE",
+      "rationale": "Within expected variance bounds; not a genuine regression."
+    },
+    {
+      "metric_name": "fpr",
+      "baseline_value": 0.0,
+      "current_value": 0.0,
+      "absolute_delta": 0.0,
+      "relative_change_pct": 0.0,
+      "is_regression": false,
+      "is_improvement": false,
+      "verdict": "NOISE",
+      "rationale": "Within expected variance bounds; not a genuine regression."
+    },
+    {
+      "metric_name": "latency_p50_ms",
+      "baseline_value": 0.8185999977285974,
+      "current_value": 0.22320000061881728,
+      "absolute_delta": -0.5954,
+      "relative_change_pct": -72.73,
+      "is_regression": false,
+      "is_improvement": false,
+      "verdict": "NOISE",
+      "rationale": "Within expected variance bounds; not a genuine regression."
+    },
+    {
+      "metric_name": "latency_p95_ms",
+      "baseline_value": 2.1450999993248843,
+      "current_value": 1.05259999872942,
+      "absolute_delta": -1.0925,
+      "relative_change_pct": -50.93,
+      "is_regression": false,
+      "is_improvement": false,
+      "verdict": "NOISE",
+      "rationale": "Within expected variance bounds; not a genuine regression."
+    }
+  ]
+}

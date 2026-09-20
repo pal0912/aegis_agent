@@ -1,0 +1,25 @@
+{
+  "runtime_type": "CONTAINER_SIMULATION_FALLBACK",
+  "image": "N/A (Simulation Fallback)",
+  "image_digest": "sha256:alpine_mock",
+  "user": "1000:1000",
+  "network_mode": "none",
+  "read_only_rootfs": true,
+  "capabilities_dropped": [
+    "ALL"
+  ],
+  "security_opt": [
+    "no-new-privileges:true"
+  ],
+  "resource_limits": {
+    "memory_limit_mb": 256,
+    "cpu_quota_us": 50000,
+    "pids_limit": 64
+  },
+  "mounts": {
+    "/tmp": "rw,noexec,nosuid,size=32m"
+  },
+  "isolation_claim": "CONTAINER_SIMULATION_FALLBACK = functional/emulation testing, NOT a proof of OS-level isolation",
+  "disclaimer": "CONTAINER_SIMULATION_FALLBACK = functional/emulation testing, NOT a proof of OS-level isolation",
+  "isolation_proven": false
+}

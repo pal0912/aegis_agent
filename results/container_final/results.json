@@ -1,0 +1,116 @@
+[
+  {
+    "attempt_id": "att_cont_read_only_probe",
+    "scenario_id": "SCEN_CONT_READ_ONLY_PROBE",
+    "runtime_type": "CONTAINER_SIMULATION_FALLBACK",
+    "exit_code": 0,
+    "stdout": "[CONTAINER_SIMULATION_FALLBACK stdout for: echo 'healthy']",
+    "stderr": "",
+    "duration_ms": 0.016400001186411828,
+    "os_level_isolation_verified": false,
+    "policy_enforced": true,
+    "sandbox_escape_detected": false,
+    "timed_out": false,
+    "metadata": {
+      "runtime_type": "CONTAINER_SIMULATION_FALLBACK",
+      "image": "N/A (Simulation Fallback)",
+      "image_digest": "sha256:alpine_mock",
+      "user": "1000:1000",
+      "network_mode": "none",
+      "read_only_rootfs": true,
+      "capabilities_dropped": [
+        "ALL"
+      ],
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "resource_limits": {
+        "memory_limit_mb": 256,
+        "cpu_quota_us": 50000,
+        "pids_limit": 64
+      },
+      "mounts": {
+        "/tmp": "rw,noexec,nosuid,size=32m"
+      },
+      "isolation_claim": "CONTAINER_SIMULATION_FALLBACK = functional/emulation testing, NOT a proof of OS-level isolation",
+      "disclaimer": "CONTAINER_SIMULATION_FALLBACK = functional/emulation testing, NOT a proof of OS-level isolation",
+      "isolation_proven": false
+    }
+  },
+  {
+    "attempt_id": "att_cont_unauthorized_write_attempt",
+    "scenario_id": "SCEN_CONT_UNAUTHORIZED_WRITE_ATTEMPT",
+    "runtime_type": "CONTAINER_SIMULATION_FALLBACK",
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "sh: Read-only file system (emulated constraint)",
+    "duration_ms": 0.004100000296602957,
+    "os_level_isolation_verified": false,
+    "policy_enforced": true,
+    "sandbox_escape_detected": false,
+    "timed_out": false,
+    "metadata": {
+      "runtime_type": "CONTAINER_SIMULATION_FALLBACK",
+      "image": "N/A (Simulation Fallback)",
+      "image_digest": "sha256:alpine_mock",
+      "user": "1000:1000",
+      "network_mode": "none",
+      "read_only_rootfs": true,
+      "capabilities_dropped": [
+        "ALL"
+      ],
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "resource_limits": {
+        "memory_limit_mb": 256,
+        "cpu_quota_us": 50000,
+        "pids_limit": 64
+      },
+      "mounts": {
+        "/tmp": "rw,noexec,nosuid,size=32m"
+      },
+      "isolation_claim": "CONTAINER_SIMULATION_FALLBACK = functional/emulation testing, NOT a proof of OS-level isolation",
+      "disclaimer": "CONTAINER_SIMULATION_FALLBACK = functional/emulation testing, NOT a proof of OS-level isolation",
+      "isolation_proven": false
+    }
+  },
+  {
+    "attempt_id": "att_cont_unauthorized_egress_attempt",
+    "scenario_id": "SCEN_CONT_UNAUTHORIZED_EGRESS_ATTEMPT",
+    "runtime_type": "CONTAINER_SIMULATION_FALLBACK",
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "sh: Network is unreachable (emulated constraint: network=none)",
+    "duration_ms": 0.003600000127335079,
+    "os_level_isolation_verified": false,
+    "policy_enforced": true,
+    "sandbox_escape_detected": false,
+    "timed_out": false,
+    "metadata": {
+      "runtime_type": "CONTAINER_SIMULATION_FALLBACK",
+      "image": "N/A (Simulation Fallback)",
+      "image_digest": "sha256:alpine_mock",
+      "user": "1000:1000",
+      "network_mode": "none",
+      "read_only_rootfs": true,
+      "capabilities_dropped": [
+        "ALL"
+      ],
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "resource_limits": {
+        "memory_limit_mb": 256,
+        "cpu_quota_us": 50000,
+        "pids_limit": 64
+      },
+      "mounts": {
+        "/tmp": "rw,noexec,nosuid,size=32m"
+      },
+      "isolation_claim": "CONTAINER_SIMULATION_FALLBACK = functional/emulation testing, NOT a proof of OS-level isolation",
+      "disclaimer": "CONTAINER_SIMULATION_FALLBACK = functional/emulation testing, NOT a proof of OS-level isolation",
+      "isolation_proven": false
+    }
+  }
+]

@@ -1,0 +1,17 @@
+{
+  "model": "protectai/deberta-v3-base-prompt-injection-v2",
+  "tokenizer": "DebertaV2Tokenizer",
+  "device": "cpu",
+  "sequence_length": 9,
+  "batch_size": 1,
+  "warmup_count": 2,
+  "sample_count": 10,
+  "cold_start_ms": 48.42759999883128,
+  "status": "AVAILABLE",
+  "warm_p50_ms": 53.781550000167044,
+  "warm_p95_ms": 58.172885000476526,
+  "warm_p99_ms": 59.11273700026868,
+  "mean_ms": 53.28514000011637,
+  "min_ms": 48.33090000101947,
+  "max_ms": 59.34770000021672
+}

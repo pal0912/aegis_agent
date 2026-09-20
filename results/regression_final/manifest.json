@@ -1,0 +1,15 @@
+{
+  "artifacts": {
+    "regression_report.json": {
+      "filename": "regression_report.json",
+      "sha256": "4faeadea7207b12b73f4a6248af9cea1f89307835c30b79a7cbc0a909f59b4bb",
+      "size_bytes": 3220
+    }
+  },
+  "contract_version": "1.0",
+  "filesystem_enforcement": "HARD",
+  "generated_timestamp": 1789919483.7144642,
+  "manifest_content_hash": "3fb4d9ab65a7a0a6288797c02ca7a399e31689dc273fbb62fbbcadd60b1c1db9",
+  "manifest_stage": "FINAL",
+  "run_id": "regression_v1_vs_v2"
+}

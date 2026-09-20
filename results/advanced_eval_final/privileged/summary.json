@@ -1,0 +1,32 @@
+{
+  "experiment_id": "ADAPTIVE_REDTEAM",
+  "run_id": "adaptive_71e9094b",
+  "observation_model": "PRIVILEGED_SECURITY_FEEDBACK",
+  "scenario_count": 5,
+  "total_adaptive_attempts": 25,
+  "successful_trajectories": 0,
+  "valid_trajectories": 5,
+  "inconclusive_trajectories": 0,
+  "invalid_trajectories": 0,
+  "error_trajectories": 0,
+  "total_trajectories": 5,
+  "observed_adaptive_asr": 0.0,
+  "inconclusive_rate": 0.0,
+  "conservative_adaptive_success_rate": 0.0,
+  "adaptive_asr": 0.0,
+  "adaptive_containment_rate": 1.0,
+  "attempts_to_containment": 1.0,
+  "successful_bypasses": 0,
+  "unique_attack_paths_count": 24,
+  "normalized_path_entropy": 0.9953966229946019,
+  "stopping_reasons": {
+    "SECURITY_CONTROL_CONTAINED": 5
+  },
+  "trajectory_count": 5,
+  "turn_count": 25,
+  "first_containment_turn": 1.0,
+  "persistent_containment": 1.0,
+  "turns_to_trajectory_termination": 5.0,
+  "containment": 1.0,
+  "path_diversity": 0.9953966229946019
+}

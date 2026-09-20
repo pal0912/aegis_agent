@@ -53,6 +53,7 @@ hf_cache/
 # Runtime Logs & Telemetry
 *.log
 *.jsonl
+!results/**/*.jsonl
 aegis_audit.jsonl
 .pytest_cache/
 .coverage
@@ -76,5 +77,9 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Benchmark Output Artifacts
-results/
+# Temporary Scratch & Intermediate Benchmark Runs
+results/smoke_test/
+results/smoke_diff/
+results/validation_run/
+results/full_run/
+results/advanced_eval/

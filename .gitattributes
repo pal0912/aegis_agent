@@ -1,0 +1,5 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Benchmark results and cryptographic audit artifacts must preserve byte-exact fidelity across OSes
+results/** -text

@@ -1529,7 +1529,12 @@ def test_independent_evidence_auditor_passes():
     auditor = IndependentEvidenceAuditor()
     result = auditor.run_full_audit()
 
-    assert result.overall_status == "PASSED"
+    if result.failures:
+        print("\nAUDITOR FAILURES:")
+        for f in result.failures:
+            print(f"  - {f}")
+
+    assert result.overall_status == "PASSED", f"Auditor failed with: {result.failures}"
     assert result.checks_failed == 0
     assert result.checks_run >= 70
     assert len(result.failures) == 0

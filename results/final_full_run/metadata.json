@@ -1,0 +1,20 @@
+{
+  "benchmark_name": "AegisAgent Security Benchmark",
+  "benchmark_contract_version": "1.0",
+  "run_id": "run_e1b97abb",
+  "random_seed": 42,
+  "python_version": "3.14.7",
+  "os_version": "Windows 11",
+  "cpu_info": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+  "gpu_info": null,
+  "aegis_version": "2.0.0",
+  "detector_version": "deberta-v3-small-ipi-v2",
+  "git_commit": "7055e8000e850cac05a8788c539ab0eef4dff935",
+  "policy_version": "strict-enterprise-v1.0",
+  "config_hash": "e2266fc522026c6501d2aa10d19ec6a3e5587d18bcca970255d2e3eec12aa94c",
+  "dataset_version": "1.0",
+  "dataset_hash": "bc3b98b97395daeb7b2670c2b16c2cd2d43ccc8b844f7bdb01cc1a3a9c433305",
+  "scenario_count": 78,
+  "validation_mode": "SIMULATION",
+  "timestamp": "2026-09-17T08:08:57.326258+00:00"
+}

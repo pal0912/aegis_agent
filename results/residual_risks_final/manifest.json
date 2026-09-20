@@ -1,0 +1,15 @@
+{
+  "artifacts": {
+    "residual_risk_report.json": {
+      "filename": "residual_risk_report.json",
+      "sha256": "102cbb93618b1795907434d02218f82fcbb258500670c9925b3da144646ea21e",
+      "size_bytes": 31837
+    }
+  },
+  "contract_version": "1.0",
+  "filesystem_enforcement": "HARD",
+  "generated_timestamp": 1789919483.7282379,
+  "manifest_content_hash": "56ed3739c027d47e52093c6d555394b4968f3b3ffeb5e88b8398f8884c66ad59",
+  "manifest_stage": "FINAL",
+  "run_id": "residual_e0284090"
+}

@@ -1,0 +1,63 @@
+{
+  "artifacts": {
+    "ablations.csv": {
+      "filename": "ablations.csv",
+      "relative_path": "ablations.csv",
+      "sha256": "1d39ac31414a4cfb0df9489e956051626f8ea483bb733f7c86c147d83b1525ac",
+      "size_bytes": 12985
+    },
+    "attacks.csv": {
+      "filename": "attacks.csv",
+      "relative_path": "attacks.csv",
+      "sha256": "fb1dd6516a88a7310e7008187baabf8ea2c9453a97853cc5fa8b835d2d828ebf",
+      "size_bytes": 3778
+    },
+    "attempts.jsonl": {
+      "filename": "attempts.jsonl",
+      "relative_path": "attempts.jsonl",
+      "sha256": "93444b8fb45d086e4b505696b73d1b75b8161cb079a4a7bd11b6b9de5d45e45d",
+      "size_bytes": 531928
+    },
+    "benign.csv": {
+      "filename": "benign.csv",
+      "relative_path": "benign.csv",
+      "sha256": "4c22e538bb2bb97ff630bf3695cb923051a464a204e1c36cd4c8a020284d387b",
+      "size_bytes": 1138
+    },
+    "latency.csv": {
+      "filename": "latency.csv",
+      "relative_path": "latency.csv",
+      "sha256": "b390d58ce08439e28ccad57c43e05fce6027c228516bc08e7175d9b32879d24f",
+      "size_bytes": 2099
+    },
+    "latency_neural_metadata.json": {
+      "filename": "latency_neural_metadata.json",
+      "relative_path": "latency_neural_metadata.json",
+      "sha256": "f16c5de150a295f321320689e94bd1bddec9c6151fd9665dddd37b86c30bc39b",
+      "size_bytes": 487
+    },
+    "metadata.json": {
+      "filename": "metadata.json",
+      "relative_path": "metadata.json",
+      "sha256": "ed3843b491cfe003dad2be9f1a029da6651d0178db5daf25707958958cf386f1",
+      "size_bytes": 803
+    },
+    "report.html": {
+      "filename": "report.html",
+      "relative_path": "report.html",
+      "sha256": "420779e329052dd49f2ee99b9696647dcdc1e47c574d380607d5f14ddf82e69d",
+      "size_bytes": 118763
+    },
+    "summary.json": {
+      "filename": "summary.json",
+      "relative_path": "summary.json",
+      "sha256": "464453cba5bb6c7d8ed2bbd51a30732c10039f9e0bff19bd3d8da1490151c3b6",
+      "size_bytes": 840
+    }
+  },
+  "contract_version": "1.0",
+  "directory": "results/final_full_run",
+  "file_count": 9,
+  "manifest_content_hash": "350626cb7bc8d3dbbade7053b794e80218378f3047e547321893255415e15e71",
+  "manifest_stage": "HISTORICAL"
+}

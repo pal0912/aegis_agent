@@ -1,0 +1,57 @@
+{
+  "artifacts": {
+    "ablations.csv": {
+      "filename": "ablations.csv",
+      "relative_path": "ablations.csv",
+      "sha256": "b22eb65cdfa4850b715c550727fb2da100c6927781978465c0dbb4c960e6faf0",
+      "size_bytes": 12937
+    },
+    "attacks.csv": {
+      "filename": "attacks.csv",
+      "relative_path": "attacks.csv",
+      "sha256": "700d77438257f30741158d1cabc133c586f527a8d2ab53e0e1c922bf06823762",
+      "size_bytes": 3768
+    },
+    "attempts.jsonl": {
+      "filename": "attempts.jsonl",
+      "relative_path": "attempts.jsonl",
+      "sha256": "4bc9d0817e33d8bbab74ad65c862921e72d0e2cf5a5cb35e390c4d138be5d6d3",
+      "size_bytes": 532330
+    },
+    "benign.csv": {
+      "filename": "benign.csv",
+      "relative_path": "benign.csv",
+      "sha256": "be481c34f3f03bbc1a4080b1672cd6d5b37db7e307743465686d44a839185829",
+      "size_bytes": 1138
+    },
+    "latency.csv": {
+      "filename": "latency.csv",
+      "relative_path": "latency.csv",
+      "sha256": "b4562170c1e00b6fb61793a9de3c47753900865224e936516ade57abc05628b2",
+      "size_bytes": 1008
+    },
+    "metadata.json": {
+      "filename": "metadata.json",
+      "relative_path": "metadata.json",
+      "sha256": "e5e5989c6541329f02e109e28cb0a305b14bfeeb8e62c7c08b79dc087b50c5f4",
+      "size_bytes": 803
+    },
+    "report.html": {
+      "filename": "report.html",
+      "relative_path": "report.html",
+      "sha256": "a0c5de4afb8c889a840afb036db9116de630b2378a53138e33447f1d1a9850d8",
+      "size_bytes": 118682
+    },
+    "summary.json": {
+      "filename": "summary.json",
+      "relative_path": "summary.json",
+      "sha256": "23b32b415e67e0b930ad4e718644c9df406e7ec7de9d55a726f381c136abd5b9",
+      "size_bytes": 903
+    }
+  },
+  "contract_version": "1.0",
+  "directory": "results/full_run_pre_remediation",
+  "file_count": 8,
+  "manifest_content_hash": "e86df7fd9d05279f36e5d42f40798a774f36d5614fe1f5de074e0a20f508336e",
+  "manifest_stage": "HISTORICAL"
+}

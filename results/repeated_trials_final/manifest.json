@@ -1,0 +1,20 @@
+{
+  "artifacts": {
+    "summary.json": {
+      "filename": "summary.json",
+      "sha256": "09abf53346374df345d3d317f8b2b611d8b0f09744e3ae25d87ee3fe5c8481c8",
+      "size_bytes": 8199
+    },
+    "trials.jsonl": {
+      "filename": "trials.jsonl",
+      "sha256": "a1dbf7c0427a2b11de26c65fadb5a073ca473a1f7caa1e8d822c3b7033e6c291",
+      "size_bytes": 58107
+    }
+  },
+  "contract_version": "1.0",
+  "filesystem_enforcement": "HARD",
+  "generated_timestamp": 1789919483.6655626,
+  "manifest_content_hash": "b507a398da1b7396f17ae4b72c0f9d99c6e926adb949e9b47725e054df69139e",
+  "manifest_stage": "FINAL",
+  "run_id": "repeated_52f7939e"
+}
