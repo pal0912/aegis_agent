@@ -228,6 +228,10 @@ class AdaptiveTrajectory:
     root_payload_hash: str
     unique_paths: List[str]
     turns: List[AdaptiveTurnRecord] = field(default_factory=list)
+    observation_model: str = ""
+    first_containment_turn: Optional[int] = None
+    persistent_containment: bool = False
+    turns_to_trajectory_termination: int = 0
 
 
 @dataclass
@@ -256,6 +260,13 @@ class AdaptiveRedTeamSummary:
     normalized_path_entropy: float
     stopping_reasons: Dict[str, int]
     trajectories: List[AdaptiveTrajectory] = field(default_factory=list)
+    trajectory_count: int = 0
+    turn_count: int = 0
+    first_containment_turn: float = 0.0
+    persistent_containment: float = 0.0
+    turns_to_trajectory_termination: float = 0.0
+    containment: float = 0.0
+    path_diversity: float = 0.0
 
 
 class GlobalExperimentBudgetManager:
@@ -741,6 +752,8 @@ class AdaptiveRedTeamEngine:
         harness.take_snapshot()
         last_attempt: Optional[AttemptResult] = None
         mutation_count = 0
+        first_containment_turn: Optional[int] = None
+        contained_turns: List[int] = []
 
         # Reserve trajectory
         if not self.budget_manager.reserve(trajectories=1):
@@ -750,14 +763,22 @@ class AdaptiveRedTeamEngine:
                 total_turns=0,
                 max_turns=self.max_turns,
                 mutation_budget=self.mutation_budget,
-                stopping_reason=AdaptiveTerminationReason.GLOBAL_BUDGET_EXHAUSTED.value,
+                stopping_reason=(
+                    AdaptiveTerminationReason.GLOBAL_BUDGET_EXHAUSTED.value
+                ),
                 final_security_outcome="NOT_APPLICABLE",
                 objective_achieved=False,
-                trajectory_validity=AdaptiveTrajectoryValidity.INCONCLUSIVE.value,
+                trajectory_validity=(
+                    AdaptiveTrajectoryValidity.INCONCLUSIVE.value
+                ),
                 trajectory_root_payload=root_payload,
                 root_payload_hash=root_hash,
                 unique_paths=[],
                 turns=[],
+                observation_model=self.observation_model.value,
+                first_containment_turn=None,
+                persistent_containment=False,
+                turns_to_trajectory_termination=0,
             )
 
         for turn_idx in range(self.max_turns):
@@ -902,6 +923,9 @@ class AdaptiveRedTeamEngine:
                 SecurityOutcome.BLOCKED,
                 SecurityOutcome.CONTAINED,
             ):
+                if first_containment_turn is None:
+                    first_containment_turn = turn_idx + 1
+                contained_turns.append(turn_idx + 1)
                 stopping_reason = (
                     AdaptiveTerminationReason.SECURITY_CONTROL_CONTAINED.value
                 )
@@ -912,10 +936,17 @@ class AdaptiveRedTeamEngine:
 
         harness.restore_snapshot()
 
+        total_executed_turns = len(trajectory_turns)
+        persistent_containment = False
+        if first_containment_turn is not None and not objective_achieved:
+            expected_turns = total_executed_turns - (first_containment_turn - 1)
+            if len(contained_turns) == expected_turns:
+                persistent_containment = True
+
         traj = AdaptiveTrajectory(
             scenario_id=scenario.scenario_id,
             initial_seed=self.random_seed,
-            total_turns=len(trajectory_turns),
+            total_turns=total_executed_turns,
             max_turns=self.max_turns,
             mutation_budget=self.mutation_budget,
             stopping_reason=stopping_reason,
@@ -926,6 +957,10 @@ class AdaptiveRedTeamEngine:
             root_payload_hash=root_hash,
             unique_paths=sorted(list(unique_paths)),
             turns=trajectory_turns,
+            observation_model=self.observation_model.value,
+            first_containment_turn=first_containment_turn,
+            persistent_containment=persistent_containment,
+            turns_to_trajectory_termination=total_executed_turns,
         )
 
         # Cryptographic lineage verification
@@ -1015,6 +1050,28 @@ class AdaptiveRedTeamEngine:
             else 0.0
         )
 
+        first_turns = [
+            t.first_containment_turn
+            for t in trajectories
+            if t.first_containment_turn is not None
+        ]
+        mean_first_containment = (
+            (sum(first_turns) / len(first_turns)) if first_turns else 0.0
+        )
+        persistent_count = sum(
+            1 for t in trajectories if t.persistent_containment
+        )
+        persistent_rate = (
+            (persistent_count / total_trajectories)
+            if total_trajectories > 0
+            else 0.0
+        )
+        mean_termination_turns = (
+            (total_turns / total_trajectories)
+            if total_trajectories > 0
+            else 0.0
+        )
+
         m_paths = len(all_unique_paths)
         if m_paths > 1:
             total_obs = sum(path_counts.values())
@@ -1048,10 +1105,17 @@ class AdaptiveRedTeamEngine:
             conservative_adaptive_success_rate=conservative_asr,
             adaptive_asr=observed_adaptive_asr,
             adaptive_containment_rate=containment_rate,
-            attempts_to_containment=avg_attempts,
+            attempts_to_containment=mean_first_containment,
             successful_bypasses=successful_bypasses,
             unique_attack_paths_count=m_paths,
             normalized_path_entropy=normalized_entropy,
             stopping_reasons=stopping_reasons,
             trajectories=trajectories,
+            trajectory_count=total_trajectories,
+            turn_count=total_turns,
+            first_containment_turn=mean_first_containment,
+            persistent_containment=persistent_rate,
+            turns_to_trajectory_termination=mean_termination_turns,
+            containment=containment_rate,
+            path_diversity=normalized_entropy,
         )

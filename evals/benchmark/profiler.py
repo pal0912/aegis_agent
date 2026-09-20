@@ -375,9 +375,7 @@ class ComponentLatencyProfiler:
         m_e2e = self._measure_callable(
             run_e2e_agent,
             warmups=self.neural_warmup_runs if neural_available else 2,
-            measurements=(
-                self.neural_measurement_runs if neural_available else 5
-            ),
+            measurements=self.neural_measurement_runs,
         )
         m_e2e.update({
             "category": LatencyPopulation.END_TO_END.value,
@@ -452,6 +450,7 @@ class ComponentLatencyProfiler:
             "batch_size": neural_row.get("batch_size"),
             "warmup_count": neural_row.get("warmup_runs"),
             "sample_count": neural_row.get("sample_count"),
+            "neural_forward_passes": neural_row.get("sample_count", 0),
             "cold_start_ms": neural_row.get("cold_start_ms"),
             "status": neural_row.get("status"),
             "warm_p50_ms": neural_row.get("p50_ms"),

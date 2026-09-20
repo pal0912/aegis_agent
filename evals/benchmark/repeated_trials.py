@@ -133,6 +133,133 @@ def calculate_relative_reduction_bootstrap_ci(
     )
 
 
+def calculate_clustered_bootstrap_ci(
+    scenario_observations: Dict[str, List["TrialObservation"]],
+    n_resamples: int = 1000,
+    confidence: float = 0.95,
+    seed: int = 42,
+) -> Dict[str, Any]:
+    """Computes cluster-level bootstrap intervals resampling scenario units.
+
+    Treats scenario ID as the primary cluster/sampling unit to respect
+    repeated-measures structure under HARNESS_RANDOMIZATION and avoid
+    artificial N=260 confidence interval narrowing.
+    """
+    if not scenario_observations:
+        return {
+            "baseline_asr_ci_95": (0.0, 0.0),
+            "aegis_asr_ci_95": (0.0, 0.0),
+            "containment_ci_95": (0.0, 0.0),
+            "paired_asr_difference_ci_95": (0.0, 0.0),
+            "relative_asr_reduction_ci_95": (0.0, 0.0),
+            "valid_resamples": 0,
+            "undefined_resamples": n_resamples,
+        }
+
+    rng = random.Random(seed)
+    scen_ids = sorted(list(scenario_observations.keys()))
+    n_clusters = len(scen_ids)
+
+    boot_base_asrs: List[float] = []
+    boot_aegis_asrs: List[float] = []
+    boot_conts: List[float] = []
+    boot_diffs: List[float] = []
+    boot_rel_reds: List[float] = []
+    undefined_rel_reds = 0
+
+    for _ in range(n_resamples):
+        sampled_ids = [rng.choice(scen_ids) for _ in range(n_clusters)]
+        pooled_obs: List[Any] = []
+        for s_id in sampled_ids:
+            pooled_obs.extend(scenario_observations[s_id])
+
+        n_obs = len(pooled_obs)
+        if n_obs == 0:
+            continue
+
+        def _is_b(o: Any) -> bool:
+            if hasattr(o, "baseline_success"):
+                return bool(o.baseline_success)
+            if isinstance(o, dict):
+                return bool(o.get("baseline_success"))
+            if isinstance(o, (tuple, list)):
+                return bool(o[0])
+            return False
+
+        def _is_a(o: Any) -> bool:
+            if hasattr(o, "aegis_success"):
+                return bool(o.aegis_success)
+            if isinstance(o, dict):
+                return bool(o.get("aegis_success"))
+            if isinstance(o, (tuple, list)):
+                return bool(o[1])
+            return False
+
+        def _is_c(o: Any) -> bool:
+            if hasattr(o, "aegis_contained"):
+                return bool(o.aegis_contained)
+            if isinstance(o, dict):
+                return bool(o.get("aegis_contained"))
+            if isinstance(o, (tuple, list)):
+                return not bool(o[1])
+            return False
+
+        b_succ = sum(1 for o in pooled_obs if _is_b(o))
+        a_succ = sum(1 for o in pooled_obs if _is_a(o))
+        cont = sum(1 for o in pooled_obs if _is_c(o))
+
+        b_rate = b_succ / n_obs
+        a_rate = a_succ / n_obs
+        c_rate = cont / n_obs
+        diff = b_rate - a_rate
+
+        boot_base_asrs.append(b_rate)
+        boot_aegis_asrs.append(a_rate)
+        boot_conts.append(c_rate)
+        boot_diffs.append(diff)
+
+        if b_succ == 0:
+            undefined_rel_reds += 1
+        else:
+            boot_rel_reds.append((b_succ - a_succ) / float(b_succ))
+
+    alpha = (1.0 - confidence) / 2.0
+    low_idx = int(alpha * len(boot_base_asrs))
+    high_idx = min(
+        len(boot_base_asrs) - 1, int((1.0 - alpha) * len(boot_base_asrs))
+    )
+
+    def _ci(arr: List[float]) -> Tuple[float, float]:
+        if not arr:
+            return (0.0, 0.0)
+        arr.sort()
+        l_val = arr[min(low_idx, len(arr) - 1)]
+        h_val = arr[min(high_idx, len(arr) - 1)]
+        return (round(l_val, 4), round(h_val, 4))
+
+    rel_valid = len(boot_rel_reds)
+    if rel_valid > 0:
+        boot_rel_reds.sort()
+        r_low = int(alpha * rel_valid)
+        r_high = min(rel_valid - 1, int((1.0 - alpha) * rel_valid))
+        rel_ci = (
+            round(boot_rel_reds[r_low], 4),
+            round(boot_rel_reds[r_high], 4),
+        )
+    else:
+        rel_ci = (0.0, 0.0)
+
+    return {
+        "baseline_asr_ci_95": _ci(boot_base_asrs),
+        "aegis_asr_ci_95": _ci(boot_aegis_asrs),
+        "containment_ci_95": _ci(boot_conts),
+        "paired_asr_difference_ci_95": _ci(boot_diffs),
+        "relative_asr_reduction_ci_95": rel_ci,
+        "valid_resamples": rel_valid,
+        "undefined_resamples": undefined_rel_reds,
+    }
+
+
 def calculate_mcnemar_test(
     contingency_table: Tuple[int, int, int, int]
 ) -> Dict[str, Any]:
@@ -222,6 +349,15 @@ class RepeatedTrialSummary:
     bootstrap_resamples_valid: int
     bootstrap_resamples_undefined: int
     mcnemar_test: Dict[str, Any]
+    unique_scenarios: int = 52
+    trial_count: int = 5
+    total_observations: int = 260
+    observations_per_scenario: int = 5
+    randomness_type: str = "HARNESS_RANDOMIZATION"
+    per_trial_baseline_asr: List[float] = field(default_factory=list)
+    per_trial_aegis_asr: List[float] = field(default_factory=list)
+    per_trial_containment: List[float] = field(default_factory=list)
+    clustered_bootstrap_ci: Dict[str, Any] = field(default_factory=dict)
     per_scenario_summary: Dict[str, Dict[str, Any]] = field(
         default_factory=dict
     )
@@ -353,22 +489,50 @@ class RepeatedTrialRunner:
         aegis_asr_mean = (total_aegis_succ / total_obs) if total_obs > 0 else 0.0
         cont_mean = (total_aegis_cont / total_obs) if total_obs > 0 else 0.0
 
-        base_ci = calculate_wilson_interval(total_base_succ, total_obs)
-        aegis_ci = calculate_wilson_interval(total_aegis_succ, total_obs)
-        cont_ci = calculate_wilson_interval(total_aegis_cont, total_obs)
+        # Cluster observations by scenario ID for cluster-level bootstrap
+        scen_obs: Dict[str, List[TrialObservation]] = {}
+        for o in observations:
+            scen_obs.setdefault(o.scenario_id, []).append(o)
+
+        cluster_boot = calculate_clustered_bootstrap_ci(scen_obs)
+
+        # Per-trial metrics across the 5 trials
+        per_trial_base: List[float] = []
+        per_trial_aegis: List[float] = []
+        per_trial_cont: List[float] = []
+        for t_idx in range(self.num_trials):
+            t_obs = [o for o in observations if o.trial_id == t_idx]
+            n_t = len(t_obs)
+            b_r = (
+                sum(1 for o in t_obs if o.baseline_success) / n_t
+                if n_t else 0.0
+            )
+            a_r = (
+                sum(1 for o in t_obs if o.aegis_success) / n_t
+                if n_t else 0.0
+            )
+            c_r = (
+                sum(1 for o in t_obs if o.aegis_contained) / n_t
+                if n_t else 0.0
+            )
+            per_trial_base.append(round(b_r, 4))
+            per_trial_aegis.append(round(a_r, 4))
+            per_trial_cont.append(round(c_r, 4))
+
+        base_ci = cluster_boot["baseline_asr_ci_95"]
+        aegis_ci = cluster_boot["aegis_asr_ci_95"]
+        cont_ci = cluster_boot["containment_ci_95"]
 
         paired_diff_mean = base_asr_mean - aegis_asr_mean
-        paired_diff_ci = calculate_paired_bootstrap_ci(paired_deltas)
+        paired_diff_ci = cluster_boot["paired_asr_difference_ci_95"]
 
         rel_red_mean = (
             paired_diff_mean / base_asr_mean if base_asr_mean > 0.0 else 0.0
         )
-        (
-            rel_red_ci,
-            bs_total,
-            bs_valid,
-            bs_undefined,
-        ) = calculate_relative_reduction_bootstrap_ci(pair_bools)
+        rel_red_ci = cluster_boot["relative_asr_reduction_ci_95"]
+        bs_total = 1000
+        bs_valid = cluster_boot["valid_resamples"]
+        bs_undefined = cluster_boot["undefined_resamples"]
 
         table_tuple = (
             contingency_counts["a"],
@@ -414,6 +578,15 @@ class RepeatedTrialRunner:
             bootstrap_resamples_valid=bs_valid,
             bootstrap_resamples_undefined=bs_undefined,
             mcnemar_test=mcnemar_res,
+            unique_scenarios=n_scen,
+            trial_count=self.num_trials,
+            total_observations=total_obs,
+            observations_per_scenario=self.num_trials,
+            randomness_type=self.randomness_classification.value,
+            per_trial_baseline_asr=per_trial_base,
+            per_trial_aegis_asr=per_trial_aegis,
+            per_trial_containment=per_trial_cont,
+            clustered_bootstrap_ci=cluster_boot,
             per_scenario_summary=scenario_stats,
             observations=observations,
         )

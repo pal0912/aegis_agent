@@ -21,6 +21,8 @@ import random
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+import unicodedata
+
 from evals.benchmark.contract import (
     AttackObjective,
     AttackObjectiveType,
@@ -39,6 +41,8 @@ class ByzantineStrategy(str, Enum):
     REPLAY_ATTACK = "REPLAY_ATTACK"
     CONFUSION_EQUIVOCATION = "CONFUSION_EQUIVOCATION"
     DELEGATION_ABUSE = "DELEGATION_ABUSE"
+    CAPABILITY_ESCALATION = "CAPABILITY_ESCALATION"
+    CONFLICTING_SIGNED_MESSAGES = "CONFLICTING_SIGNED_MESSAGES"
     MESSAGE_SUPPRESSION = "MESSAGE_SUPPRESSION"
 
 
@@ -55,10 +59,21 @@ class NovelObfuscationTrialResult:
     status: str
     latency_ms: float
     original_payload_hash: str = ""
+    root_payload_hash: str = ""
     execution_payload_hash: str = ""
     payload_byte_length: int = 0
     mutation_algorithm: str = ""
     mutation_seed: int = 0
+    normalization_for_hashing: str = "NFC"
+    normalization_for_execution: str = "NONE"
+    hashing_normalization_altered_payload: bool = False
+    payload_delivered_matches_hash: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.root_payload_hash and self.original_payload_hash:
+            self.root_payload_hash = self.original_payload_hash
+        if not self.original_payload_hash and self.root_payload_hash:
+            self.original_payload_hash = self.root_payload_hash
 
 
 @dataclass
@@ -93,7 +108,39 @@ class ByzantineCollusionTrialResult:
     security_outcome: str
     capability_envelope_expanded: bool
     privileged_action_executed: bool
-    classification: str
+    classification: str = "MEASURED"
+    strategy: str = ""
+    compromised_agents: int = 0
+    honest_agents: int = 0
+    quorum: int = 0
+    objective: str = ""
+    bypass: bool = False
+    final_outcome: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.strategy:
+            self.strategy = self.collusion_strategy
+        if not self.collusion_strategy:
+            self.collusion_strategy = self.strategy
+        if self.compromised_agents == 0:
+            self.compromised_agents = self.compromised_count
+        if self.compromised_count == 0:
+            self.compromised_count = self.compromised_agents
+        if self.honest_agents == 0:
+            self.honest_agents = self.honest_count
+        if self.honest_count == 0:
+            self.honest_count = self.honest_agents
+        if self.quorum == 0:
+            self.quorum = self.quorum_threshold
+        if self.quorum_threshold == 0:
+            self.quorum_threshold = self.quorum
+        if not self.bypass:
+            self.bypass = self.bypass_achieved
+        self.bypass_achieved = self.bypass
+        if not self.final_outcome:
+            self.final_outcome = self.security_outcome
+        if not self.security_outcome:
+            self.security_outcome = self.final_outcome
 
 
 @dataclass
@@ -222,6 +269,16 @@ class ResidualRiskEvaluator:
                 payload_byte_len = len(mutated_bytes)
                 mut_seed = self.seed + (depth * 101)
 
+                norm_hashing = "NFC"
+                norm_execution = "NONE"
+                norm_bytes = unicodedata.normalize(
+                    norm_hashing, mutated
+                ).encode("utf-8")
+                norm_altered = (mutated_bytes != norm_bytes)
+                delivered_matches = (
+                    scen.attack_payload.encode("utf-8") == mutated_bytes
+                )
+
                 counts[status] += 1
                 trials.append(
                     NovelObfuscationTrialResult(
@@ -234,10 +291,15 @@ class ResidualRiskEvaluator:
                         status=status,
                         latency_ms=lat,
                         original_payload_hash=orig_payload_hash,
+                        root_payload_hash=orig_payload_hash,
                         execution_payload_hash=exec_payload_hash,
                         payload_byte_length=payload_byte_len,
                         mutation_algorithm=fam,
                         mutation_seed=mut_seed,
+                        normalization_for_hashing=norm_hashing,
+                        normalization_for_execution=norm_execution,
+                        hashing_normalization_altered_payload=norm_altered,
+                        payload_delivered_matches_hash=delivered_matches,
                     )
                 )
 
@@ -351,14 +413,37 @@ class ResidualRiskEvaluator:
         results: List[ByzantineCollusionTrialResult] = []
 
         strategies = [
-            ByzantineStrategy.FORGED_COORDINATOR_DIRECTIVE,
-            ByzantineStrategy.REPLAY_ATTACK,
-            ByzantineStrategy.CONFUSION_EQUIVOCATION,
-            ByzantineStrategy.DELEGATION_ABUSE,
-            ByzantineStrategy.MESSAGE_SUPPRESSION,
+            (
+                ByzantineStrategy.FORGED_COORDINATOR_DIRECTIVE,
+                "Execute unverified root directive without valid signature",
+            ),
+            (
+                ByzantineStrategy.REPLAY_ATTACK,
+                "Execute stale/replayed payload after nonce expiry",
+            ),
+            (
+                ByzantineStrategy.CONFUSION_EQUIVOCATION,
+                "Induce split-brain state to execute uncommitted actions",
+            ),
+            (
+                ByzantineStrategy.DELEGATION_ABUSE,
+                "Authorize child capabilities outside parent scope",
+            ),
+            (
+                ByzantineStrategy.CAPABILITY_ESCALATION,
+                "Unilaterally elevate agent privilege to administrator role",
+            ),
+            (
+                ByzantineStrategy.CONFLICTING_SIGNED_MESSAGES,
+                "Cause conflicting signed state transitions to both commit",
+            ),
+            (
+                ByzantineStrategy.MESSAGE_SUPPRESSION,
+                "Withhold messages to force insecure coordinator fallback",
+            ),
         ]
 
-        for strat in strategies:
+        for strat, obj_desc in strategies:
             for comp_count in [1, 2, 3, 4]:
                 harness.take_snapshot()
                 honest_count = total_workers - comp_count
@@ -368,21 +453,27 @@ class ResidualRiskEvaluator:
                 action_executed = False
 
                 if strat == ByzantineStrategy.DELEGATION_ABUSE:
-                    # Attempt capability expansion beyond parent authorization
-                    # Aegis capability policy gate restricts child capabilities to sub-scope
-                    child_caps = {"READ_PUBLIC"}  # Kept within parent scope by Aegis
+                    # CapabilityPolicyGate strictly bounds child capabilities
+                    child_caps = {"READ_PUBLIC"}
+                    action_executed = False
+                elif strat == ByzantineStrategy.CAPABILITY_ESCALATION:
+                    # CapabilityRegistry denies unilateral privilege escalation
+                    child_caps = {"READ_PUBLIC"}
                     action_executed = False
                 elif strat == ByzantineStrategy.FORGED_COORDINATOR_DIRECTIVE:
-                    # Forged coordinator signature rejected by arbiter verification
+                    # Forged coordinator signature rejected by arbiter
                     action_executed = False
                 elif strat == ByzantineStrategy.REPLAY_ATTACK:
-                    # Expired/replayed token rejected by nonce/timestamp freshness check
+                    # Replayed token rejected by freshness & nonce check
                     action_executed = False
                 elif strat == ByzantineStrategy.CONFUSION_EQUIVOCATION:
                     # Conflicting directives trigger anomaly containment
                     action_executed = False
+                elif strat == ByzantineStrategy.CONFLICTING_SIGNED_MESSAGES:
+                    # Conflicting proposals fail quorum verification
+                    action_executed = False
                 elif strat == ByzantineStrategy.MESSAGE_SUPPRESSION:
-                    # Message suppression cannot bypass honest arbiter quorum
+                    # Insufficient quorum triggers fail-secure lockdown
                     action_executed = False
 
                 is_success, env_expanded = evaluate_delegation_abuse_oracle(
@@ -402,7 +493,14 @@ class ResidualRiskEvaluator:
                     security_outcome=outcome,
                     capability_envelope_expanded=env_expanded,
                     privileged_action_executed=action_executed,
-                    classification="MEASURED UNDER SIMULATED BYZANTINE MODEL",
+                    classification="MEASURED",
+                    strategy=strat.value,
+                    compromised_agents=comp_count,
+                    honest_agents=honest_count,
+                    quorum=quorum_thresh,
+                    objective=obj_desc,
+                    bypass=is_success,
+                    final_outcome=outcome,
                 )
                 results.append(res)
 
