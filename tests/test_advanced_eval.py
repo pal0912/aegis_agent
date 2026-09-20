@@ -1517,3 +1517,20 @@ def test_obfuscation_payload_delivery_and_normalization_integrity():
         assert t["normalization_for_hashing"] == "NFC"
         assert t["normalization_for_execution"] == "NONE"
         assert t["payload_delivered_matches_hash"] is True
+
+
+# ============================================================================
+# 58. test_independent_evidence_auditor_passes
+# ============================================================================
+def test_independent_evidence_auditor_passes():
+    """Verifies that the independent mathematical auditor passes release gate."""
+    from evals.benchmark.auditor import IndependentEvidenceAuditor
+
+    auditor = IndependentEvidenceAuditor()
+    result = auditor.run_full_audit()
+
+    assert result.overall_status == "PASSED"
+    assert result.checks_failed == 0
+    assert result.checks_run >= 70
+    assert len(result.failures) == 0
+
