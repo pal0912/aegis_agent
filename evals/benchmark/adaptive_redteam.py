@@ -13,6 +13,7 @@ import json
 import math
 import os
 import random
+import signal
 import subprocess
 import sys
 import threading
@@ -353,8 +354,8 @@ class GlobalExperimentBudgetManager:
 
 def terminate_process_tree(pid: int) -> bool:
     """Actively terminates a process tree cleanly across Windows and POSIX."""
-    if pid <= 0:
-        return True
+    if pid <= 0 or pid == os.getpid():
+        return False
     try:
         if sys.platform == "win32":
             subprocess.run(
@@ -363,7 +364,36 @@ def terminate_process_tree(pid: int) -> bool:
                 check=False,
             )
         else:
-            os.killpg(os.getpgid(pid), 9)
+            current_pgid = os.getpgid(0)
+            try:
+                target_pgid = os.getpgid(pid)
+            except OSError:
+                target_pgid = None
+
+            if (
+                target_pgid is not None
+                and target_pgid != current_pgid
+                and target_pgid == pid
+            ):
+                os.killpg(target_pgid, signal.SIGKILL)
+            else:
+                subprocess.run(
+                    ["pkill", "-9", "-P", str(pid)],
+                    capture_output=True,
+                    check=False,
+                )
+                children_file = f"/proc/{pid}/task/{pid}/children"
+                if os.path.exists(children_file):
+                    try:
+                        with open(children_file, "r") as f:
+                            for c_pid_str in f.read().split():
+                                try:
+                                    os.kill(int(c_pid_str), signal.SIGKILL)
+                                except OSError:
+                                    pass
+                    except OSError:
+                        pass
+                os.kill(pid, signal.SIGKILL)
         return True
     except Exception:
         return False

@@ -753,14 +753,28 @@ def test_black_box_observation_isolation():
 def test_pid_safe_timeout_termination():
     """Verifies process termination function executes cleanly."""
     # Spawn a disposable sleep process
-    cmd = ["cmd", "/c", "timeout", "10"] if sys.platform == "win32" else ["sleep", "10"]
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    cmd = (
+        ["cmd", "/c", "timeout", "10"]
+        if sys.platform == "win32"
+        else ["sleep", "10"]
+    )
+    kwargs = {"start_new_session": True} if sys.platform != "win32" else {}
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        **kwargs,
+    )
     assert proc.poll() is None
     # Terminate process tree
     res = terminate_process_tree(proc.pid)
     assert res is True
     time.sleep(0.5)
     proc.poll()
+    # Safety invariant: Must never terminate self or invalid PIDs
+    assert terminate_process_tree(os.getpid()) is False
+    assert terminate_process_tree(0) is False
+    assert terminate_process_tree(-1) is False
 
 
 # ============================================================================
