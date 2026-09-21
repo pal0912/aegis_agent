@@ -80,6 +80,24 @@ class ComponentLatencyProfiler:
         self.neural_warmup_runs = neural_warmup_runs
         self.neural_measurement_runs = neural_measurement_runs
         self.neural_forward_pass_count = 0
+        self.raw_samples: List[Dict[str, Any]] = []
+
+    @staticmethod
+    def calculate_percentile(sorted_samples: List[float], p: float) -> float:
+        """Calculates exact linear interpolation percentile."""
+        n = len(sorted_samples)
+        if n == 0:
+            return 0.0
+        if n == 1:
+            return sorted_samples[0]
+        k = (n - 1) * p
+        f = math.floor(k)
+        c = math.ceil(k)
+        if f == c:
+            return sorted_samples[int(k)]
+        d0 = sorted_samples[int(f)] * (c - k)
+        d1 = sorted_samples[int(c)] * (k - f)
+        return d0 + d1
 
     def _measure_callable(
         self,
@@ -87,6 +105,8 @@ class ComponentLatencyProfiler:
         *args,
         warmups: Optional[int] = None,
         measurements: Optional[int] = None,
+        category: str = "DEFAULT",
+        execution_mode: str = "REAL",
         **kwargs,
     ) -> Dict[str, float]:
         w_runs = self.warmup_runs if warmups is None else warmups
@@ -102,39 +122,36 @@ class ComponentLatencyProfiler:
             func(*args, **kwargs)
 
         samples_ms: List[float] = []
-        for _ in range(m_runs):
+        for order_idx in range(m_runs):
             t0 = time.perf_counter()
             func(*args, **kwargs)
-            samples_ms.append((time.perf_counter() - t0) * 1000.0)
+            lat_ms = (time.perf_counter() - t0) * 1000.0
+            samples_ms.append(lat_ms)
+            self.raw_samples.append({
+                "sample_id": f"LAT-{len(self.raw_samples) + 1:06d}",
+                "category": category,
+                "measurement_order": order_idx,
+                "timestamp_ns": time.time_ns(),
+                "latency_ms": lat_ms,
+                "execution_mode": execution_mode,
+            })
 
-        samples_ms.sort()
-        n = len(samples_ms)
+        sorted_samples = sorted(samples_ms)
+        n = len(sorted_samples)
 
-        def percentile(p: float) -> float:
-            if n == 1:
-                return samples_ms[0]
-            k = (n - 1) * p
-            f = math.floor(k)
-            c = math.ceil(k)
-            if f == c:
-                return samples_ms[int(k)]
-            d0 = samples_ms[int(f)] * (c - k)
-            d1 = samples_ms[int(c)] * (k - f)
-            return d0 + d1
-
-        stdev_val = statistics.stdev(samples_ms) if n > 1 else 0.0
+        stdev_val = statistics.stdev(sorted_samples) if n > 1 else 0.0
         return {
             "cold_start_ms": cold_start_ms,
             "warmup_runs": w_runs,
             "sample_count": n,
-            "mean_ms": statistics.mean(samples_ms),
+            "mean_ms": statistics.mean(sorted_samples),
             "stdev_ms": stdev_val,
-            "median_ms": statistics.median(samples_ms),
-            "p50_ms": percentile(0.50),
-            "p95_ms": percentile(0.95),
-            "p99_ms": percentile(0.99),
-            "min_ms": min(samples_ms),
-            "max_ms": max(samples_ms),
+            "median_ms": statistics.median(sorted_samples),
+            "p50_ms": self.calculate_percentile(sorted_samples, 0.50),
+            "p95_ms": self.calculate_percentile(sorted_samples, 0.95),
+            "p99_ms": self.calculate_percentile(sorted_samples, 0.99),
+            "min_ms": min(sorted_samples),
+            "max_ms": max(sorted_samples),
         }
 
     def run_all_profiles(self) -> List[Dict[str, Any]]:
@@ -190,7 +207,11 @@ class ComponentLatencyProfiler:
             detector = InjectionDetector(lazy_load=True)
             return detector.check_heuristics(sample_text)
 
-        m_heur = self._measure_callable(run_heuristic)
+        m_heur = self._measure_callable(
+            run_heuristic,
+            category=LatencyPopulation.HEURISTIC_ONLY.value,
+            execution_mode="REAL_HEURISTIC",
+        )
         m_heur.update({
             "category": LatencyPopulation.HEURISTIC_ONLY.value,
             "component": "Rule-Based Regex Heuristics",
@@ -205,7 +226,11 @@ class ComponentLatencyProfiler:
         results.append(m_heur)
 
         # 2. DETERMINISTIC_MIDDLEWARE
-        m_det_mid = self._measure_callable(run_deterministic_pipeline)
+        m_det_mid = self._measure_callable(
+            run_deterministic_pipeline,
+            category=LatencyPopulation.DETERMINISTIC_MIDDLEWARE.value,
+            execution_mode="REAL_DETERMINISTIC",
+        )
         m_det_mid.update({
             "category": LatencyPopulation.DETERMINISTIC_MIDDLEWARE.value,
             "component": "Full Deterministic Security Middleware",
@@ -229,7 +254,11 @@ class ComponentLatencyProfiler:
             ("Policy Gate", run_policy),
         ]
         for name, fn in subcomps:
-            m_sub = self._measure_callable(fn)
+            m_sub = self._measure_callable(
+                fn,
+                category=f"DETERMINISTIC_SUBCOMPONENT: {name}",
+                execution_mode="REAL",
+            )
             m_sub.update({
                 "category": f"DETERMINISTIC_SUBCOMPONENT: {name}",
                 "component": name,
@@ -280,6 +309,8 @@ class ComponentLatencyProfiler:
                 neural_fn,
                 warmups=self.neural_warmup_runs,
                 measurements=self.neural_measurement_runs,
+                category=LatencyPopulation.REAL_NEURAL_DETECTOR.value,
+                execution_mode="REAL_NEURAL_INFERENCE",
             )
             m_neural.update({
                 "category": LatencyPopulation.REAL_NEURAL_DETECTOR.value,
@@ -328,6 +359,8 @@ class ComponentLatencyProfiler:
                 run_full_aegis,
                 warmups=self.neural_warmup_runs,
                 measurements=self.neural_measurement_runs,
+                category=LatencyPopulation.FULL_AEGIS_WITH_NEURAL.value,
+                execution_mode="FULL_SECURITY_MIDDLEWARE",
             )
             m_full.update({
                 "category": LatencyPopulation.FULL_AEGIS_WITH_NEURAL.value,
@@ -376,6 +409,8 @@ class ComponentLatencyProfiler:
             run_e2e_agent,
             warmups=self.neural_warmup_runs if neural_available else 2,
             measurements=self.neural_measurement_runs,
+            category=LatencyPopulation.END_TO_END.value,
+            execution_mode="END_TO_END_PIPELINE",
         )
         m_e2e.update({
             "category": LatencyPopulation.END_TO_END.value,
@@ -391,6 +426,12 @@ class ComponentLatencyProfiler:
         results.append(m_e2e)
 
         return results
+
+    def export_raw_samples(self, filepath: str) -> None:
+        """Exports raw individual latency observation records."""
+        with open(filepath, "w", encoding="utf-8") as f:
+            for sample in self.raw_samples:
+                f.write(json.dumps(sample) + "\n")
 
     def export_csv(
         self, profile_results: List[Dict[str, Any]], filepath: str

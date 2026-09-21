@@ -2,24 +2,29 @@
   "artifacts": {
     "component_latency.csv": {
       "filename": "component_latency.csv",
-      "sha256": "57a15551aebdc2112d9fffede69fe079863fa04960fd9ed71501e102be332977",
-      "size_bytes": 2194
+      "sha256": "d6cb8bf27f2613c339db09b0ee350455a9f287c5e7078c3cc4792ffaea69d687",
+      "size_bytes": 2190
     },
     "neural_metadata.json": {
       "filename": "neural_metadata.json",
-      "sha256": "3cfffb150f278ac4cbdffdb9f6f333567938898d98987d5f2de45e4ea0a7ae28",
-      "size_bytes": 546
+      "sha256": "5bd187a081165e704b445fc155e640c087425bb3dbccc8681042fb964d19512f",
+      "size_bytes": 550
     },
     "profiles.json": {
       "filename": "profiles.json",
-      "sha256": "62b428be444126d0a20697ee07f583aaf321134afe5d731412126e346149efb0",
-      "size_bytes": 7671
+      "sha256": "627071fcf55317a75222dcc74a4b1721fd6dd147bb4198a53d53c169c87c25aa",
+      "size_bytes": 7657
+    },
+    "raw_latency.jsonl": {
+      "filename": "raw_latency.jsonl",
+      "sha256": "bd75106d30155f61832ae190398fb0e0d376a862cd0774b1ea583738b84d3d37",
+      "size_bytes": 112068
     }
   },
   "contract_version": "1.0",
   "filesystem_enforcement": "HARD",
-  "generated_timestamp": 1789919499.8342867,
-  "manifest_content_hash": "a452dff1c839185045e312c82f99297bfb8be98c5f463a5e6390a0f3ea1d090b",
+  "generated_timestamp": 1789994355.4979682,
+  "manifest_content_hash": "f9211e6b1ddf1ee71657b4325d57968290ae6fdcbb1fa993e25a5f3d964f5a1e",
   "manifest_stage": "FINAL",
   "run_id": "perf_profiling_50_samples"
 }

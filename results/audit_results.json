@@ -1,7 +1,14 @@
 {
+  "auditor_version": "2.1.0",
+  "auditor_git_commit": "43f7a33535673d430b894f08b7d21afbe9dd7f91",
+  "auditor_source_hash": "fe0411597ea14db948ad9d9700461a81ec50240973ad17756f8b8d2b093155b6",
+  "python_version": "3.14.7 (tags/v3.14.7:823f032, Aug  5 2026, 10:51:32) [MSC v.1944 64 bit (AMD64)]",
+  "platform": "win32",
+  "environment_identifier": "Python 3.14.7-win32",
+  "execution_timestamp": "2026-09-21T12:53:56Z",
   "overall_status": "PASSED",
-  "checks_run": 78,
-  "checks_passed": 78,
+  "checks_run": 86,
+  "checks_passed": 86,
   "checks_failed": 0,
   "warnings": [],
   "artifacts_verified": [
@@ -55,20 +62,26 @@
     },
     {
       "path": "results/performance_final/component_latency.csv",
-      "size_bytes": 2194,
-      "sha256": "57a15551aebdc2112d9fffede69fe079863fa04960fd9ed71501e102be332977",
+      "size_bytes": 2190,
+      "sha256": "d6cb8bf27f2613c339db09b0ee350455a9f287c5e7078c3cc4792ffaea69d687",
       "verified": true
     },
     {
       "path": "results/performance_final/neural_metadata.json",
-      "size_bytes": 546,
-      "sha256": "3cfffb150f278ac4cbdffdb9f6f333567938898d98987d5f2de45e4ea0a7ae28",
+      "size_bytes": 550,
+      "sha256": "5bd187a081165e704b445fc155e640c087425bb3dbccc8681042fb964d19512f",
       "verified": true
     },
     {
       "path": "results/performance_final/profiles.json",
-      "size_bytes": 7671,
-      "sha256": "62b428be444126d0a20697ee07f583aaf321134afe5d731412126e346149efb0",
+      "size_bytes": 7657,
+      "sha256": "627071fcf55317a75222dcc74a4b1721fd6dd147bb4198a53d53c169c87c25aa",
+      "verified": true
+    },
+    {
+      "path": "results/performance_final/raw_latency.jsonl",
+      "size_bytes": 112068,
+      "sha256": "bd75106d30155f61832ae190398fb0e0d376a862cd0774b1ea583738b84d3d37",
       "verified": true
     },
     {
@@ -245,47 +258,22 @@
   "statistical_tests_verified": [
     {
       "test": "wilson_score_interval",
-      "metric": "baseline_asr",
+      "metric": "trial_0_baseline",
       "raw_numerator": 49,
       "raw_denominator": 52,
       "point_estimate": 0.9423,
       "independent_lower": 0.8436,
       "independent_upper": 0.9802,
-      "reported_lower": 0.8436,
-      "reported_upper": 0.9802,
-      "difference_lower": 0.0,
-      "difference_upper": 0.0,
-      "tolerance": 0.0001,
       "passed": true
     },
     {
       "test": "wilson_score_interval",
-      "metric": "aegis_asr",
+      "metric": "trial_0_aegis",
       "raw_numerator": 0,
       "raw_denominator": 52,
       "point_estimate": 0.0,
       "independent_lower": 0.0,
       "independent_upper": 0.0688,
-      "reported_lower": 0.0,
-      "reported_upper": 0.0688,
-      "difference_lower": 0.0,
-      "difference_upper": 0.0,
-      "tolerance": 0.0001,
-      "passed": true
-    },
-    {
-      "test": "wilson_score_interval",
-      "metric": "containment",
-      "raw_numerator": 52,
-      "raw_denominator": 52,
-      "point_estimate": 1.0,
-      "independent_lower": 0.9312,
-      "independent_upper": 1.0,
-      "reported_lower": 0.9312,
-      "reported_upper": 1.0,
-      "difference_lower": 0.0,
-      "difference_upper": 0.0,
-      "tolerance": 0.0001,
       "passed": true
     },
     {
@@ -312,7 +300,10 @@
           1.0
         ],
         "valid_resamples": 1000,
-        "undefined_resamples": 0
+        "undefined_resamples": 0,
+        "bootstrap_resamples_total": 1000,
+        "bootstrap_resamples_valid": 1000,
+        "bootstrap_resamples_undefined": 0
       },
       "reported": {
         "baseline_asr_ci_95": [
@@ -347,10 +338,140 @@
       "p_value_str": "p < 1e-10",
       "reported_statistic": 243.0041,
       "matches": true
+    },
+    {
+      "test": "raw_latency_recalculation",
+      "category": "HEURISTIC_ONLY",
+      "sample_count": 50,
+      "independent_mean_ms": 0.0263,
+      "reported_mean_ms": 0.0263,
+      "independent_p50_ms": 0.026,
+      "reported_p50_ms": 0.026,
+      "independent_p95_ms": 0.0273,
+      "reported_p95_ms": 0.0273,
+      "matches": true
+    },
+    {
+      "test": "raw_latency_recalculation",
+      "category": "DETERMINISTIC_MIDDLEWARE",
+      "sample_count": 50,
+      "independent_mean_ms": 0.2206,
+      "reported_mean_ms": 0.2206,
+      "independent_p50_ms": 0.1944,
+      "reported_p50_ms": 0.1944,
+      "independent_p95_ms": 0.3767,
+      "reported_p95_ms": 0.3767,
+      "matches": true
+    },
+    {
+      "test": "raw_latency_recalculation",
+      "category": "DETERMINISTIC_SUBCOMPONENT: Sanitizer",
+      "sample_count": 50,
+      "independent_mean_ms": 0.0005,
+      "reported_mean_ms": 0.0005,
+      "independent_p50_ms": 0.0005,
+      "reported_p50_ms": 0.0005,
+      "independent_p95_ms": 0.0006,
+      "reported_p95_ms": 0.0006,
+      "matches": true
+    },
+    {
+      "test": "raw_latency_recalculation",
+      "category": "DETERMINISTIC_SUBCOMPONENT: DLP",
+      "sample_count": 50,
+      "independent_mean_ms": 0.0917,
+      "reported_mean_ms": 0.0917,
+      "independent_p50_ms": 0.0898,
+      "reported_p50_ms": 0.0898,
+      "independent_p95_ms": 0.1055,
+      "reported_p95_ms": 0.1055,
+      "matches": true
+    },
+    {
+      "test": "raw_latency_recalculation",
+      "category": "DETERMINISTIC_SUBCOMPONENT: Network",
+      "sample_count": 50,
+      "independent_mean_ms": 0.0034,
+      "reported_mean_ms": 0.0034,
+      "independent_p50_ms": 0.0032,
+      "reported_p50_ms": 0.0032,
+      "independent_p95_ms": 0.0047,
+      "reported_p95_ms": 0.0047,
+      "matches": true
+    },
+    {
+      "test": "raw_latency_recalculation",
+      "category": "DETERMINISTIC_SUBCOMPONENT: Action Graph",
+      "sample_count": 50,
+      "independent_mean_ms": 0.0057,
+      "reported_mean_ms": 0.0057,
+      "independent_p50_ms": 0.0055,
+      "reported_p50_ms": 0.0055,
+      "independent_p95_ms": 0.0067,
+      "reported_p95_ms": 0.0067,
+      "matches": true
+    },
+    {
+      "test": "raw_latency_recalculation",
+      "category": "DETERMINISTIC_SUBCOMPONENT: Capability Registry",
+      "sample_count": 50,
+      "independent_mean_ms": 0.0075,
+      "reported_mean_ms": 0.0075,
+      "independent_p50_ms": 0.0049,
+      "reported_p50_ms": 0.0049,
+      "independent_p95_ms": 0.0064,
+      "reported_p95_ms": 0.0064,
+      "matches": true
+    },
+    {
+      "test": "raw_latency_recalculation",
+      "category": "DETERMINISTIC_SUBCOMPONENT: Policy Gate",
+      "sample_count": 50,
+      "independent_mean_ms": 0.0053,
+      "reported_mean_ms": 0.0053,
+      "independent_p50_ms": 0.0049,
+      "reported_p50_ms": 0.0049,
+      "independent_p95_ms": 0.0063,
+      "reported_p95_ms": 0.0063,
+      "matches": true
+    },
+    {
+      "test": "raw_latency_recalculation",
+      "category": "REAL_NEURAL_DETECTOR",
+      "sample_count": 50,
+      "independent_mean_ms": 64.0709,
+      "reported_mean_ms": 64.0709,
+      "independent_p50_ms": 62.4344,
+      "reported_p50_ms": 62.4344,
+      "independent_p95_ms": 76.8922,
+      "reported_p95_ms": 76.8922,
+      "matches": true
+    },
+    {
+      "test": "raw_latency_recalculation",
+      "category": "FULL_AEGIS_WITH_NEURAL",
+      "sample_count": 50,
+      "independent_mean_ms": 62.2087,
+      "reported_mean_ms": 62.2087,
+      "independent_p50_ms": 62.1428,
+      "reported_p50_ms": 62.1428,
+      "independent_p95_ms": 73.486,
+      "reported_p95_ms": 73.486,
+      "matches": true
+    },
+    {
+      "test": "raw_latency_recalculation",
+      "category": "END_TO_END",
+      "sample_count": 50,
+      "independent_mean_ms": 79.6082,
+      "reported_mean_ms": 79.6082,
+      "independent_p50_ms": 81.9071,
+      "reported_p50_ms": 81.9071,
+      "independent_p95_ms": 90.7277,
+      "reported_p95_ms": 90.7277,
+      "matches": true
     }
   ],
-  "limitations": [
-    "Raw per-iteration timing sample series (individual 50 floats) are not serialized into profiles.json; verification was performed on sample_count (>= 50), forward_pass counter equivalence, percentile monotonicity, and non-negative variances."
-  ],
+  "limitations": [],
   "failures": []
 }

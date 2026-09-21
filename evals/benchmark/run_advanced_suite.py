@@ -319,6 +319,8 @@ def run_all_advanced_evaluations(
     with open(perf_dir / "profiles.json", "w", encoding="utf-8") as f:
         json.dump(profiles, f, indent=2)
 
+    profiler.export_raw_samples(str(perf_dir / "raw_latency.jsonl"))
+
     generate_manifest(
         str(perf_dir),
         stage="FINAL",

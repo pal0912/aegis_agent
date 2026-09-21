@@ -51,7 +51,9 @@
   },
   "contract_version": "1.0",
   "directory": "results/full_run_pre_remediation",
+  "directory_identifier": "full_run_pre_remediation",
   "file_count": 8,
-  "manifest_content_hash": "e86df7fd9d05279f36e5d42f40798a774f36d5614fe1f5de074e0a20f508336e",
+  "generation_version": "1.0",
+  "manifest_content_hash": "29e0a8b8cd7cff4d08dd05d3447a4d0274174186bcd36d5c1fa1a7693b52a337",
   "manifest_stage": "HISTORICAL"
 }

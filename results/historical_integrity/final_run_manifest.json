@@ -57,7 +57,9 @@
   },
   "contract_version": "1.0",
   "directory": "results/final_full_run",
+  "directory_identifier": "final_full_run",
   "file_count": 9,
-  "manifest_content_hash": "350626cb7bc8d3dbbade7053b794e80218378f3047e547321893255415e15e71",
+  "generation_version": "1.0",
+  "manifest_content_hash": "8a5a6420df30d2c0aa574d3994de7b510406a8dec467b89bdd3d26f2d4e0561c",
   "manifest_stage": "HISTORICAL"
 }
