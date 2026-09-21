@@ -1,6 +1,6 @@
 {
   "experiment_id": "ADAPTIVE_REDTEAM",
-  "run_id": "adaptive_e318da2d",
+  "run_id": "adaptive_8af04d3d",
   "observation_model": "BLACK_BOX",
   "scenario_count": 5,
   "total_adaptive_attempts": 25,
@@ -20,7 +20,7 @@
   "unique_attack_paths_count": 20,
   "normalized_path_entropy": 0.9819358620970596,
   "stopping_reasons": {
-    "SECURITY_CONTROL_CONTAINED": 5
+    "MAX_TURNS_EXHAUSTED": 5
   },
   "trajectory_count": 5,
   "turn_count": 25,

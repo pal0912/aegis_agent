@@ -2,19 +2,19 @@
   "artifacts": {
     "summary.json": {
       "filename": "summary.json",
-      "sha256": "09abf53346374df345d3d317f8b2b611d8b0f09744e3ae25d87ee3fe5c8481c8",
-      "size_bytes": 8199
+      "sha256": "7623f0b5436efab296ec136314c9b41063f217b824d50f17a991f81ccb2462bb",
+      "size_bytes": 8526
     },
     "trials.jsonl": {
       "filename": "trials.jsonl",
-      "sha256": "a1dbf7c0427a2b11de26c65fadb5a073ca473a1f7caa1e8d822c3b7033e6c291",
-      "size_bytes": 58107
+      "sha256": "166a743f65583dd76b8fc6597af5fa041cb8ddbd05dd97ea212c9a16163410cc",
+      "size_bytes": 57835
     }
   },
   "contract_version": "1.0",
   "filesystem_enforcement": "HARD",
-  "generated_timestamp": 1789919483.6655626,
-  "manifest_content_hash": "b507a398da1b7396f17ae4b72c0f9d99c6e926adb949e9b47725e054df69139e",
+  "generated_timestamp": 1789999558.7330773,
+  "manifest_content_hash": "1fc7e2c4f214a95a76381e6d2f6d53bd220c02e612129e60038b7eb61e5a0f72",
   "manifest_stage": "FINAL",
-  "run_id": "repeated_52f7939e"
+  "run_id": "repeated_194840d5"
 }

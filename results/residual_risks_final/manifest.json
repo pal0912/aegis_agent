@@ -2,14 +2,14 @@
   "artifacts": {
     "residual_risk_report.json": {
       "filename": "residual_risk_report.json",
-      "sha256": "102cbb93618b1795907434d02218f82fcbb258500670c9925b3da144646ea21e",
-      "size_bytes": 31837
+      "sha256": "a0e88042c6b975fe1b3e3125a3b07e923d80299fa6f1fbfc2dc1a67854bdd9c2",
+      "size_bytes": 32167
     }
   },
   "contract_version": "1.0",
   "filesystem_enforcement": "HARD",
-  "generated_timestamp": 1789919483.7282379,
-  "manifest_content_hash": "56ed3739c027d47e52093c6d555394b4968f3b3ffeb5e88b8398f8884c66ad59",
+  "generated_timestamp": 1789999558.9272192,
+  "manifest_content_hash": "8a21bb86aa3e5d4e1ce7fd6daee98cdb7d464647a02a5153c383ec251f3b2e2e",
   "manifest_stage": "FINAL",
-  "run_id": "residual_e0284090"
+  "run_id": "residual_a33d7cb1"
 }

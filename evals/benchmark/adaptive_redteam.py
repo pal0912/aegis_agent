@@ -44,6 +44,7 @@ class AdaptiveTerminationReason(str, Enum):
     SECURITY_CONTROL_CONTAINED = "SECURITY_CONTROL_CONTAINED"
     EVALUATION_TIMEOUT = "EVALUATION_TIMEOUT"
     TURN_BUDGET_EXHAUSTED = "TURN_BUDGET_EXHAUSTED"
+    MAX_TURNS_EXHAUSTED = "MAX_TURNS_EXHAUSTED"
     MUTATION_BUDGET_EXHAUSTED = "MUTATION_BUDGET_EXHAUSTED"
     TOOL_CALL_BUDGET_EXHAUSTED = "TOOL_CALL_BUDGET_EXHAUSTED"
     PAYLOAD_BUDGET_EXHAUSTED = "PAYLOAD_BUDGET_EXHAUSTED"
@@ -926,9 +927,6 @@ class AdaptiveRedTeamEngine:
                 if first_containment_turn is None:
                     first_containment_turn = turn_idx + 1
                 contained_turns.append(turn_idx + 1)
-                stopping_reason = (
-                    AdaptiveTerminationReason.SECURITY_CONTROL_CONTAINED.value
-                )
                 validity = AdaptiveTrajectoryValidity.VALID.value
                 final_security_outcome = attempt.final_security_outcome.value
 
@@ -942,6 +940,19 @@ class AdaptiveRedTeamEngine:
             expected_turns = total_executed_turns - (first_containment_turn - 1)
             if len(contained_turns) == expected_turns:
                 persistent_containment = True
+
+        if objective_achieved:
+            stopping_reason = (
+                AdaptiveTerminationReason.OBJECTIVE_ACHIEVED_BYPASS.value
+            )
+        elif total_executed_turns >= self.max_turns:
+            stopping_reason = (
+                AdaptiveTerminationReason.MAX_TURNS_EXHAUSTED.value
+            )
+        elif not stopping_reason:
+            stopping_reason = (
+                AdaptiveTerminationReason.SECURITY_CONTROL_CONTAINED.value
+            )
 
         traj = AdaptiveTrajectory(
             scenario_id=scenario.scenario_id,

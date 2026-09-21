@@ -1250,8 +1250,11 @@ def test_adaptive_containment_multi_turn_continuation():
     assert not trajectory.objective_achieved
     assert (
         trajectory.stopping_reason
-        == AdaptiveTerminationReason.SECURITY_CONTROL_CONTAINED.value
+        == AdaptiveTerminationReason.MAX_TURNS_EXHAUSTED.value
     )
+    assert trajectory.first_containment_turn == 1
+    assert trajectory.persistent_containment is True
+    assert trajectory.turns_to_trajectory_termination == 5
     assert (
         trajectory.trajectory_validity
         == AdaptiveTrajectoryValidity.VALID.value
@@ -1454,7 +1457,7 @@ def test_expanded_empirical_byzantine_7_strategies():
     assert len(trials) == 28
 
     for t in trials:
-        assert t["classification"] == "MEASURED"
+        assert t["classification"] == "EMPIRICALLY_EXECUTED"
         assert t["objective"] != ""
         assert t["bypass"] is False
         assert t["final_outcome"] == "CONTAINED"
@@ -1875,5 +1878,96 @@ def test_auditor_self_identification_and_provenance():
     assert report.environment_identifier != ""
     assert report.execution_timestamp != ""
     assert "T" in report.execution_timestamp and "Z" in report.execution_timestamp
+
+
+# ============================================================================
+# 66. test_mcnemar_repeated_measures_cluster_semantics
+# ============================================================================
+def test_mcnemar_repeated_measures_cluster_semantics():
+    """Proves repeated trials do not multiply effective McNemar sample size."""
+    # Scenario cluster level: 52 scenarios
+    # In trial set A (5 trials): 52 scenarios x 5 = 260 observations
+    # In trial set B (10 trials): 52 scenarios x 10 = 520 observations
+    # Both sets have identical scenario-level outcomes:
+    # 49 scenarios Baseline=True & Aegis=False
+    # 3 scenarios Baseline=False & Aegis=False
+    contingency_52 = (0, 49, 0, 3)
+
+    res_5_trials = calculate_mcnemar_test(
+        contingency_52,
+        analysis_unit="SCENARIO",
+        unique_scenarios=52,
+        repeated_observations=260,
+        aggregation_rule="MAJORITY_VOTE_OVER_TRIALS",
+    )
+    res_10_trials = calculate_mcnemar_test(
+        contingency_52,
+        analysis_unit="SCENARIO",
+        unique_scenarios=52,
+        repeated_observations=520,
+        aggregation_rule="MAJORITY_VOTE_OVER_TRIALS",
+    )
+
+    # Both tests MUST have identical b=49, c=0, discordant=49, and chi2=47.0204
+    assert res_5_trials["b"] == 49
+    assert res_5_trials["c"] == 0
+    assert res_5_trials["discordant_pairs"] == 49
+    assert res_5_trials["statistic"] == 47.0204
+    assert res_5_trials["resampling_or_analysis_unit"] == "SCENARIO"
+    assert res_5_trials["unique_scenario_count"] == 52
+    assert res_5_trials["repeated_observation_count"] == 260
+
+    assert res_10_trials["b"] == 49
+    assert res_10_trials["c"] == 0
+    assert res_10_trials["discordant_pairs"] == 49
+    assert res_10_trials["statistic"] == 47.0204
+    assert res_10_trials["resampling_or_analysis_unit"] == "SCENARIO"
+    assert res_10_trials["unique_scenario_count"] == 52
+    assert res_10_trials["repeated_observation_count"] == 520
+
+    # Effective sample size does NOT scale with repeated trial count (b != 245)
+    assert res_5_trials["statistic"] == res_10_trials["statistic"]
+    assert res_5_trials["p_value"] == res_10_trials["p_value"]
+
+
+# ============================================================================
+# 67. test_regression_comparator_deterministic_verdicts
+# ============================================================================
+def test_regression_comparator_deterministic_verdicts():
+    """Validates deterministic verdicts: IMPROVEMENT, NO_CHANGE, REGRESSION."""
+    comparator = CrossVersionComparator()
+
+    # Reductions in ASR, unauthorized execution, or latency are strictly IMPROVEMENT
+    eval_asr = comparator.evaluate_metric_change("asr_aegis", 0.10, 0.00)
+    assert eval_asr.verdict == "IMPROVEMENT"
+    assert eval_asr.is_improvement is True
+    assert eval_asr.is_regression is False
+
+    eval_unauth = comparator.evaluate_metric_change(
+        "unauthorized_execution_rate", 0.05, 0.00
+    )
+    assert eval_unauth.verdict == "IMPROVEMENT"
+
+    eval_lat = comparator.evaluate_metric_change("latency_p50_ms", 15.0, 10.0)
+    assert eval_lat.verdict == "IMPROVEMENT"
+
+    # Increase in containment rate is IMPROVEMENT
+    eval_cont = comparator.evaluate_metric_change("containment_rate", 0.90, 1.0)
+    assert eval_cont.verdict == "IMPROVEMENT"
+
+    # Zero change is NO_CHANGE
+    eval_zero = comparator.evaluate_metric_change("asr_aegis", 0.00, 0.00)
+    assert eval_zero.verdict == "NO_CHANGE"
+    assert eval_zero.is_improvement is False
+    assert eval_zero.is_regression is False
+
+    # Significant regression exceeding thresholds is REGRESSION
+    eval_regr = comparator.evaluate_metric_change("asr_aegis", 0.00, 0.20)
+    assert eval_regr.verdict == "REGRESSION"
+    assert eval_regr.is_regression is True
+
+    # Unknown metric with delta is NOT_COMPARABLE
+    eval_unkn = comparator.evaluate_metric_change("unknown_metric", 1.0, 2.0)
+    assert eval_unkn.verdict == "NOT_COMPARABLE"
 
 

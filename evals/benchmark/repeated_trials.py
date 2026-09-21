@@ -261,7 +261,11 @@ def calculate_clustered_bootstrap_ci(
 
 
 def calculate_mcnemar_test(
-    contingency_table: Tuple[int, int, int, int]
+    contingency_table: Tuple[int, int, int, int],
+    analysis_unit: str = "SCENARIO",
+    unique_scenarios: int = 52,
+    repeated_observations: int = 260,
+    aggregation_rule: str = "MAJORITY_VOTE_OVER_TRIALS",
 ) -> Dict[str, Any]:
     """Executes McNemar's test with Edwards continuity correction.
 
@@ -276,6 +280,15 @@ def calculate_mcnemar_test(
     if discordant == 0:
         return {
             "status": "NO_DISCORDANT_PAIRS",
+            "analysis_unit": analysis_unit,
+            "resampling_or_analysis_unit": analysis_unit,
+            "unique_scenario_count": unique_scenarios,
+            "repeated_observation_count": repeated_observations,
+            "aggregation_rule": aggregation_rule,
+            "b": b,
+            "c": c,
+            "test_method": "MCNEMAR_EDWARDS",
+            "correction": "EDWARDS_CONTINUITY_CORRECTION",
             "statistic": "NOT_APPLICABLE",
             "p_value": "NOT_APPLICABLE",
             "p_value_formatted": "NOT_APPLICABLE",
@@ -293,6 +306,15 @@ def calculate_mcnemar_test(
 
     return {
         "status": "SIGNIFICANT" if p_val < 0.05 else "NOT_SIGNIFICANT",
+        "analysis_unit": analysis_unit,
+        "resampling_or_analysis_unit": analysis_unit,
+        "unique_scenario_count": unique_scenarios,
+        "repeated_observation_count": repeated_observations,
+        "aggregation_rule": aggregation_rule,
+        "b": b,
+        "c": c,
+        "test_method": "MCNEMAR_EDWARDS",
+        "correction": "EDWARDS_CONTINUITY_CORRECTION",
         "statistic": round(chi2, 4),
         "p_value": p_val,
         "p_value_formatted": format_p_value(p_val),
@@ -534,13 +556,41 @@ class RepeatedTrialRunner:
         bs_valid = cluster_boot["valid_resamples"]
         bs_undefined = cluster_boot["undefined_resamples"]
 
-        table_tuple = (
-            contingency_counts["a"],
-            contingency_counts["b"],
-            contingency_counts["c"],
-            contingency_counts["d"],
+        # Scenario-level aggregation for McNemar paired inference
+        # Aggregation rule: Scenario outcome is True if objective achieved in majority of repeated trials
+        scenario_a = 0
+        scenario_b = 0
+        scenario_c = 0
+        scenario_d = 0
+
+        for sc_id, stats in scenario_stats.items():
+            n_sc_trials = stats["trials"]
+            majority_thresh = (n_sc_trials + 1) // 2
+            scen_base = stats["base_succ"] >= majority_thresh
+            scen_aegis = stats["aegis_succ"] >= majority_thresh
+
+            if scen_base and not scen_aegis:
+                scenario_b += 1
+            elif not scen_base and scen_aegis:
+                scenario_c += 1
+            elif scen_base and scen_aegis:
+                scenario_a += 1
+            else:
+                scenario_d += 1
+
+        scenario_contingency = (
+            scenario_a,
+            scenario_b,
+            scenario_c,
+            scenario_d,
         )
-        mcnemar_res = calculate_mcnemar_test(table_tuple)
+        mcnemar_res = calculate_mcnemar_test(
+            scenario_contingency,
+            analysis_unit="SCENARIO",
+            unique_scenarios=n_scen,
+            repeated_observations=total_obs,
+            aggregation_rule="MAJORITY_VOTE_OVER_TRIALS",
+        )
 
         mode_str = (
             "HIGH_CONFIDENCE_REPEATED_MEASUREMENT"

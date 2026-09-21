@@ -44,12 +44,12 @@
       {
         "stage_name": "8. Immutable Audit Trace",
         "status": "SEALED",
-        "details": "Audit record hashed and sealed into ledger: hmac-sha256:1789919500:ATK-024:a..."
+        "details": "Audit record hashed and sealed into ledger: hmac-sha256:1789999609:ATK-024:a..."
       }
     ],
     "final_security_outcome": "CONTAINED",
     "objective_achieved": false,
-    "audit_hmac": "hmac-sha256:1789919500:ATK-024:aegis_audit"
+    "audit_hmac": "hmac-sha256:1789999609:ATK-024:aegis_audit"
   },
   {
     "scenario_id": "ATK-036",
@@ -96,12 +96,12 @@
       {
         "stage_name": "8. Immutable Audit Trace",
         "status": "SEALED",
-        "details": "Audit record hashed and sealed into ledger: hmac-sha256:1789919500:ATK-036:a..."
+        "details": "Audit record hashed and sealed into ledger: hmac-sha256:1789999609:ATK-036:a..."
       }
     ],
     "final_security_outcome": "CONTAINED",
     "objective_achieved": false,
-    "audit_hmac": "hmac-sha256:1789919500:ATK-036:aegis_audit"
+    "audit_hmac": "hmac-sha256:1789999609:ATK-036:aegis_audit"
   },
   {
     "scenario_id": "ATK-044",
@@ -148,12 +148,12 @@
       {
         "stage_name": "8. Immutable Audit Trace",
         "status": "SEALED",
-        "details": "Audit record hashed and sealed into ledger: hmac-sha256:1789919500:ATK-044:a..."
+        "details": "Audit record hashed and sealed into ledger: hmac-sha256:1789999609:ATK-044:a..."
       }
     ],
     "final_security_outcome": "CONTAINED",
     "objective_achieved": false,
-    "audit_hmac": "hmac-sha256:1789919500:ATK-044:aegis_audit"
+    "audit_hmac": "hmac-sha256:1789999609:ATK-044:aegis_audit"
   },
   {
     "scenario_id": "ATK-044",
@@ -200,11 +200,11 @@
       {
         "stage_name": "8. Immutable Audit Trace",
         "status": "SEALED",
-        "details": "Audit record hashed and sealed into ledger: hmac-sha256:1789919500:ATK-044:a..."
+        "details": "Audit record hashed and sealed into ledger: hmac-sha256:1789999609:ATK-044:a..."
       }
     ],
     "final_security_outcome": "CONTAINED",
     "objective_achieved": false,
-    "audit_hmac": "hmac-sha256:1789919500:ATK-044:aegis_audit"
+    "audit_hmac": "hmac-sha256:1789999609:ATK-044:aegis_audit"
   }
 ]

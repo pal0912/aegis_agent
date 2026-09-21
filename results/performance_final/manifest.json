@@ -2,29 +2,29 @@
   "artifacts": {
     "component_latency.csv": {
       "filename": "component_latency.csv",
-      "sha256": "d6cb8bf27f2613c339db09b0ee350455a9f287c5e7078c3cc4792ffaea69d687",
-      "size_bytes": 2190
+      "sha256": "02dbb3ca9bbf593ecbabb3fd598dba5fed40db196c0ef701489526d70293058d",
+      "size_bytes": 2221
     },
     "neural_metadata.json": {
       "filename": "neural_metadata.json",
-      "sha256": "5bd187a081165e704b445fc155e640c087425bb3dbccc8681042fb964d19512f",
+      "sha256": "ae0da761bccf6bfa992ccbb4db278b103a38b9091815643ec42c3b4eab473a60",
       "size_bytes": 550
     },
     "profiles.json": {
       "filename": "profiles.json",
-      "sha256": "627071fcf55317a75222dcc74a4b1721fd6dd147bb4198a53d53c169c87c25aa",
-      "size_bytes": 7657
+      "sha256": "0f58f5a3c6421360eb89c0bee9d743023da29daf48fdd51740830b5196e94ca2",
+      "size_bytes": 7622
     },
     "raw_latency.jsonl": {
       "filename": "raw_latency.jsonl",
-      "sha256": "bd75106d30155f61832ae190398fb0e0d376a862cd0774b1ea583738b84d3d37",
-      "size_bytes": 112068
+      "sha256": "5d2c3f7482950fe918da590055eb09985fba95e86bdd643dc1dfedbc7b8b490c",
+      "size_bytes": 111987
     }
   },
   "contract_version": "1.0",
   "filesystem_enforcement": "HARD",
-  "generated_timestamp": 1789994355.4979682,
-  "manifest_content_hash": "f9211e6b1ddf1ee71657b4325d57968290ae6fdcbb1fa993e25a5f3d964f5a1e",
+  "generated_timestamp": 1789999608.6687646,
+  "manifest_content_hash": "b00117f6def7c02d5d691a3aef5ea2527a328be70e669023acc1d69380fc65e9",
   "manifest_stage": "FINAL",
   "run_id": "perf_profiling_50_samples"
 }

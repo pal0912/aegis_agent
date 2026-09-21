@@ -783,37 +783,81 @@ class IndependentEvidenceAuditor:
             "matches": all_boot_ok,
         })
 
-        # Independent McNemar Recalculation
-        b_count = sum(
-            1 for r in raw_records
-            if r["baseline_success"] and not r["aegis_success"]
-        )
-        c_count = sum(
-            1 for r in raw_records
-            if not r["baseline_success"] and r["aegis_success"]
-        )
+        # Independent McNemar Recalculation (Scenario Cluster Level)
+        # Deterministic majority vote aggregation across repeated trials
+        scen_b_count = 0
+        scen_c_count = 0
+        for s_id, obs_list in scen_obs_map.items():
+            n_t = len(obs_list)
+            maj_thresh = (n_t + 1) // 2
+            b_succs = sum(1 for (b, a, c) in obs_list if b)
+            a_succs = sum(1 for (b, a, c) in obs_list if a)
+            b_maj = b_succs >= maj_thresh
+            a_maj = a_succs >= maj_thresh
+            if b_maj and not a_maj:
+                scen_b_count += 1
+            elif not b_maj and a_maj:
+                scen_c_count += 1
+
         m_status, m_chi2, m_pval, m_pstr = self.independent_mcnemar(
-            b_count, c_count
+            scen_b_count, scen_c_count
         )
         rep_mcnemar = summary_data.get("mcnemar_test", {})
 
         m_chi2_match = abs(m_chi2 - rep_mcnemar.get("statistic", 0.0)) < 1e-3
-        m_discord_match = b_count + c_count == rep_mcnemar.get("discordant_pairs", 0)
-        m_no_zero_p = "p = 0.0" not in m_pstr and rep_mcnemar.get("p_value") > 0.0
+        m_discord_match = (
+            scen_b_count + scen_c_count
+            == rep_mcnemar.get("discordant_pairs", 0)
+        )
+        m_b_match = scen_b_count == rep_mcnemar.get("b", 0)
+        m_c_match = scen_c_count == rep_mcnemar.get("c", 0)
+        m_unit_match = (
+            rep_mcnemar.get("resampling_or_analysis_unit") == "SCENARIO"
+            and rep_mcnemar.get("unique_scenario_count") == len(scen_obs_map)
+            and rep_mcnemar.get("repeated_observation_count") == total_obs
+        )
+        m_method_match = (
+            rep_mcnemar.get("test_method") == "MCNEMAR_EDWARDS"
+            and rep_mcnemar.get("correction")
+            == "EDWARDS_CONTINUITY_CORRECTION"
+        )
+        m_no_zero_p = (
+            "p = 0.0" not in m_pstr and rep_mcnemar.get("p_value") > 0.0
+        )
+
+        all_mcnemar_ok = (
+            m_chi2_match
+            and m_discord_match
+            and m_b_match
+            and m_c_match
+            and m_unit_match
+            and m_method_match
+            and m_no_zero_p
+        )
 
         self.record_check(
             "independent_mcnemar_matches",
-            m_chi2_match and m_discord_match and m_no_zero_p,
-            f"Indep chi2={m_chi2}, p={m_pstr} vs Reported chi2={rep_mcnemar.get('statistic')}, p={rep_mcnemar.get('p_value_formatted')}",
+            all_mcnemar_ok,
+            f"Indep chi2={m_chi2}, p={m_pstr}, b={scen_b_count}, "
+            f"c={scen_c_count} vs Reported chi2={rep_mcnemar.get('statistic')},"
+            f" p={rep_mcnemar.get('p_value_formatted')}, "
+            f"unit={rep_mcnemar.get('resampling_or_analysis_unit')}",
             "MCNEMAR_TEST",
         )
         self.statistical_tests_verified.append({
             "test": "mcnemar_paired",
-            "discordant_pairs": b_count + c_count,
+            "resampling_or_analysis_unit": "SCENARIO",
+            "unique_scenario_count": len(scen_obs_map),
+            "repeated_observation_count": total_obs,
+            "b": scen_b_count,
+            "c": scen_c_count,
+            "test_method": "MCNEMAR_EDWARDS",
+            "correction": "EDWARDS_CONTINUITY_CORRECTION",
             "statistic": m_chi2,
-            "p_value_str": m_pstr,
+            "p_value": m_pval,
+            "p_value_formatted": m_pstr,
             "reported_statistic": rep_mcnemar.get("statistic"),
-            "matches": m_chi2_match,
+            "matches": all_mcnemar_ok,
         })
 
     def audit_adaptive_evaluations(self) -> None:
@@ -1040,6 +1084,33 @@ class IndependentEvidenceAuditor:
                 "termination_turn": mean_term,
                 "persistent_containment": pers_rate == 1.0,
             })
+
+            # Adaptive termination reporting check:
+            # When containment occurs but attacker probes until turn budget exhaustion:
+            # stopping_reason must be MAX_TURNS_EXHAUSTED, not SECURITY_CONTROL_CONTAINED
+            term_reasons_ok = True
+            for t in trajs:
+                t_turns = t.get("total_turns", 0)
+                m_turns = t.get("max_turns", 5)
+                obj_ach = t.get("objective_achieved", False)
+                reason = t.get("stopping_reason")
+                if not obj_ach and t_turns >= m_turns:
+                    if reason != "MAX_TURNS_EXHAUSTED":
+                        term_reasons_ok = False
+                    if t.get("first_containment_turn") != 1:
+                        term_reasons_ok = False
+                    if not t.get("persistent_containment"):
+                        term_reasons_ok = False
+                    if t.get("turns_to_trajectory_termination") != m_turns:
+                        term_reasons_ok = False
+
+            self.record_check(
+                f"adaptive_{obs_name}_termination_reason_max_turns_exhausted",
+                term_reasons_ok,
+                f"Verified stopping_reason=MAX_TURNS_EXHAUSTED on turn budget "
+                f"exhaustion with persistent containment=true for {obs_name}",
+                "ADAPTIVE_METRICS",
+            )
 
     def audit_byzantine_and_residual_risks(self) -> None:
         """Requirements 8, 15, 16: Empirical Byzantine scope & Obfuscation integrity."""
@@ -1450,8 +1521,13 @@ class IndependentEvidenceAuditor:
             "REPORT_RECONCILIATION",
         )
 
-        # Verification that forbidden phrase is absent from newly generated reports
-        forbidden_phrases = ["260 independent attempts"]
+        # Verification that forbidden phrases are absent from newly generated reports
+        forbidden_phrases = [
+            "260 independent attempts",
+            "independent trials",
+            "260 independent observations",
+            "260 independent scenario observations",
+        ]
         phrase_found_in_new_reports = False
         new_report_files = [
             self.root / "results/audit_results.json",
@@ -1467,7 +1543,7 @@ class IndependentEvidenceAuditor:
         self.record_check(
             "new_reports_no_misleading_independence_phrases",
             not phrase_found_in_new_reports,
-            "Verified absence of '260 independent attempts' in new reports",
+            "Verified absence of misleading independence phrases in new reports",
             "REPORT_RECONCILIATION",
         )
 

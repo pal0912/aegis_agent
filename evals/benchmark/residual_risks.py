@@ -493,7 +493,7 @@ class ResidualRiskEvaluator:
                     security_outcome=outcome,
                     capability_envelope_expanded=env_expanded,
                     privileged_action_executed=action_executed,
-                    classification="MEASURED",
+                    classification="EMPIRICALLY_EXECUTED",
                     strategy=strat.value,
                     compromised_agents=comp_count,
                     honest_agents=honest_count,

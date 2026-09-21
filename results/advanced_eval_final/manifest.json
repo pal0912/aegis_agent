@@ -2,19 +2,19 @@
   "artifacts": {
     "summary.json": {
       "filename": "summary.json",
-      "sha256": "5ae8fd3ef6435bb2854da050c26cf1adda138dcd578ab0e1207b12a48e469168",
-      "size_bytes": 963
+      "sha256": "d975dcdc130ba2d810d7d207077fbba19c1790871c4366b1e9fc5e6cc1f69093",
+      "size_bytes": 956
     },
     "trajectories.jsonl": {
       "filename": "trajectories.jsonl",
-      "sha256": "dabc66536d8092c2bb44d74a5499eb37b7b4d2733e0e81f47668c42e4008b7f2",
-      "size_bytes": 82084
+      "sha256": "1734429ed430a6805ea5a45071368fc1708252f3f14eaf9b90cb5f7b3f995b6f",
+      "size_bytes": 82033
     }
   },
   "contract_version": "1.0",
   "filesystem_enforcement": "HARD",
-  "generated_timestamp": 1789919459.0624373,
-  "manifest_content_hash": "d7a0f54e6ed8213cb5eaa17f663177af977421c4ce1986417078b6cf92eb10fa",
+  "generated_timestamp": 1789999536.1828268,
+  "manifest_content_hash": "083c731c7a93fb6466bf55afe44ca29a229f79f9fff13840999bcda0f31b51ea",
   "manifest_stage": "FINAL",
-  "run_id": "adaptive_e318da2d"
+  "run_id": "adaptive_8af04d3d"
 }

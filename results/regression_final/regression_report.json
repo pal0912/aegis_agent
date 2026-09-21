@@ -13,7 +13,7 @@
     "status_label": "FULLY_COMPATIBLE",
     "warnings": []
   },
-  "overall_verdict": "SECURITY_IMPROVEMENT",
+  "overall_verdict": "IMPROVEMENT",
   "metric_evaluations": [
     {
       "metric_name": "asr_aegis",
@@ -24,7 +24,7 @@
       "is_regression": false,
       "is_improvement": true,
       "verdict": "IMPROVEMENT",
-      "rationale": "Decreased by -0.0962 (-100.0%), indicating security/performance gain."
+      "rationale": "Decreased by 0.0962 (100.0%), indicating security/performance gain."
     },
     {
       "metric_name": "containment_rate",
@@ -46,7 +46,7 @@
       "is_regression": false,
       "is_improvement": true,
       "verdict": "IMPROVEMENT",
-      "rationale": "Decreased by -0.0962 (-100.0%), indicating security/performance gain."
+      "rationale": "Decreased by 0.0962 (100.0%), indicating security/performance gain."
     },
     {
       "metric_name": "exfiltration_rate",
@@ -56,8 +56,8 @@
       "relative_change_pct": 0.0,
       "is_regression": false,
       "is_improvement": false,
-      "verdict": "NOISE",
-      "rationale": "Within expected variance bounds; not a genuine regression."
+      "verdict": "NO_CHANGE",
+      "rationale": "Zero observed difference between baseline and current run."
     },
     {
       "metric_name": "fpr",
@@ -67,8 +67,8 @@
       "relative_change_pct": 0.0,
       "is_regression": false,
       "is_improvement": false,
-      "verdict": "NOISE",
-      "rationale": "Within expected variance bounds; not a genuine regression."
+      "verdict": "NO_CHANGE",
+      "rationale": "Zero observed difference between baseline and current run."
     },
     {
       "metric_name": "latency_p50_ms",
@@ -77,9 +77,9 @@
       "absolute_delta": -0.5954,
       "relative_change_pct": -72.73,
       "is_regression": false,
-      "is_improvement": false,
-      "verdict": "NOISE",
-      "rationale": "Within expected variance bounds; not a genuine regression."
+      "is_improvement": true,
+      "verdict": "IMPROVEMENT",
+      "rationale": "Decreased by 0.5954 (72.7%), indicating security/performance gain."
     },
     {
       "metric_name": "latency_p95_ms",
@@ -88,9 +88,9 @@
       "absolute_delta": -1.0925,
       "relative_change_pct": -50.93,
       "is_regression": false,
-      "is_improvement": false,
-      "verdict": "NOISE",
-      "rationale": "Within expected variance bounds; not a genuine regression."
+      "is_improvement": true,
+      "verdict": "IMPROVEMENT",
+      "rationale": "Decreased by 1.0925 (50.9%), indicating security/performance gain."
     }
   ]
 }
