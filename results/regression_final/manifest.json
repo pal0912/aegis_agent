@@ -2,14 +2,14 @@
   "artifacts": {
     "regression_report.json": {
       "filename": "regression_report.json",
-      "sha256": "87aeb6cb9deecf0c96a53095ae38a4bf5920116dc5952671272bf73734ec3779",
-      "size_bytes": 4085
+      "sha256": "1317c9530a60fb598fe7d1c626681c8249e8a5910b2be946f4b6e89079868621",
+      "size_bytes": 4556
     }
   },
   "contract_version": "1.0",
   "filesystem_enforcement": "HARD",
-  "generated_timestamp": 1790002457.6335132,
-  "manifest_content_hash": "6bd609203470d65029114599e8ba5d72c86298bac32e69015cd459b0d80200eb",
+  "generated_timestamp": 1790008050.277162,
+  "manifest_content_hash": "6622bb1ce517561e6f0d7061bd2d7bca649e57b6346c69b1487c52ecbfd9b802",
   "manifest_stage": "FINAL",
   "run_id": "regression_v1_vs_v2"
 }

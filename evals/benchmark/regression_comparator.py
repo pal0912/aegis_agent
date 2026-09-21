@@ -7,11 +7,19 @@ thresholds and measurement uncertainty.
 """
 
 from dataclasses import asdict, dataclass, field
+from enum import Enum
 import hashlib
 import json
 import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+
+class LatencyMeasurementType(str, Enum):
+    """Distinguishes security-decision latency from controlled pure component latency."""
+
+    SECURITY_DECISION_LATENCY = "SECURITY_DECISION_LATENCY"
+    COMPONENT_PERFORMANCE_LATENCY = "COMPONENT_PERFORMANCE_LATENCY"
 
 
 @dataclass
@@ -40,6 +48,7 @@ class MetricRegressionEvaluation:
     is_improvement: bool
     verdict: str  # REGRESSION, IMPROVEMENT, NO_CHANGE, NOT_COMPARABLE
     rationale: str
+    measurement_type: Optional[str] = None
 
 
 @dataclass
@@ -273,25 +282,42 @@ class CrossVersionComparator:
         higher_is_worse, abs_margin, min_rel_pct = cfg
         is_regr = False
         is_impr = False
+        m_type = (
+            LatencyMeasurementType.SECURITY_DECISION_LATENCY.value
+            if "latency" in name
+            else None
+        )
 
         if abs(delta) < 1e-6:
             verdict = "NO_CHANGE"
-            rationale = "Zero observed difference between baseline and current run."
+            rationale = (
+                "Zero observed difference between baseline and current run."
+            )
         elif higher_is_worse:
-            # Metrics where increase is worse (ASR, Unauthorized Execution, Exfiltration, FPR, Latency)
+            # Metrics where increase is worse (ASR, Unauthorized Execution,
+            # Exfiltration, FPR, Latency)
             if delta < 0.0:
                 is_impr = True
                 verdict = "IMPROVEMENT"
-                rationale = (
-                    f"Decreased by {abs(delta):.4f} ({abs(rel_pct):.1f}%), "
-                    f"indicating security/performance gain."
-                )
+                if "latency" in name:
+                    rationale = (
+                        f"SECURITY_DECISION_LATENCY IMPROVEMENT: Decreased by "
+                        f"{abs(delta):.4f} ({abs(rel_pct):.1f}%) due to earlier "
+                        f"control-flow containment; does not prove the "
+                        f"implementation is inherently faster."
+                    )
+                else:
+                    rationale = (
+                        f"Decreased by {abs(delta):.4f} ({abs(rel_pct):.1f}%), "
+                        f"indicating security/performance gain."
+                    )
             elif delta > abs_margin and rel_pct > min_rel_pct:
                 is_regr = True
                 verdict = "REGRESSION"
                 rationale = (
                     f"Increased by {delta:+.4f} ({rel_pct:+.1f}%), exceeding "
-                    f"absolute margin ({abs_margin}) and relative threshold ({min_rel_pct}%)."
+                    f"absolute margin ({abs_margin}) and relative threshold "
+                    f"({min_rel_pct}%)."
                 )
             else:
                 verdict = "NO_CHANGE"
@@ -302,7 +328,8 @@ class CrossVersionComparator:
                 is_impr = True
                 verdict = "IMPROVEMENT"
                 rationale = (
-                    f"Increased by {delta:+.4f}, indicating improved containment."
+                    f"Increased by {delta:+.4f}, indicating improved "
+                    f"containment."
                 )
             elif delta < abs_margin and rel_pct < min_rel_pct:
                 is_regr = True
@@ -325,7 +352,100 @@ class CrossVersionComparator:
             is_improvement=is_impr,
             verdict=verdict,
             rationale=rationale,
+            measurement_type=m_type,
         )
+
+    @staticmethod
+    def is_pure_performance_comparable(
+        same_workload_population: bool,
+        same_execution_stages: bool,
+        same_measurement_methodology: bool,
+        same_environment: bool,
+        same_sample_semantics: bool,
+    ) -> bool:
+        """Determines whether two latency measurements are methodologically comparable.
+
+        Requires:
+        - same workload population
+        - same execution stages
+        - same measurement methodology
+        - same environment
+        - same sample semantics
+        If any condition fails, the comparison is NOT_COMPARABLE.
+        """
+        return (
+            same_workload_population
+            and same_execution_stages
+            and same_measurement_methodology
+            and same_environment
+            and same_sample_semantics
+        )
+
+    def evaluate_component_performance_latency(
+        self,
+        name: str,
+        base_val: float,
+        curr_val: float,
+        same_workload_population: bool = True,
+        same_execution_stages: bool = True,
+        same_measurement_methodology: bool = True,
+        same_environment: bool = True,
+        same_sample_semantics: bool = True,
+        base_execution_mode: Optional[str] = None,
+        curr_execution_mode: Optional[str] = None,
+    ) -> MetricRegressionEvaluation:
+        """Evaluates pure component performance latency under strict rules.
+
+        If the workload population, executed stages, measurement methodology,
+        environment, sample semantics, or execution modes differ, strictly
+        classifies as NOT_COMPARABLE.
+        """
+        if (
+            base_execution_mode
+            and curr_execution_mode
+            and base_execution_mode != curr_execution_mode
+        ):
+            same_execution_stages = False
+
+        comparable = self.is_pure_performance_comparable(
+            same_workload_population=same_workload_population,
+            same_execution_stages=same_execution_stages,
+            same_measurement_methodology=same_measurement_methodology,
+            same_environment=same_environment,
+            same_sample_semantics=same_sample_semantics,
+        )
+
+        if not comparable:
+            delta = curr_val - base_val
+            rel_pct = (
+                ((curr_val - base_val) / base_val * 100.0)
+                if abs(base_val) > 1e-6 else 0.0
+            )
+            return MetricRegressionEvaluation(
+                metric_name=name,
+                baseline_value=base_val,
+                current_value=curr_val,
+                absolute_delta=round(delta, 6),
+                relative_change_pct=round(rel_pct, 2),
+                is_regression=False,
+                is_improvement=False,
+                verdict="NOT_COMPARABLE",
+                rationale=(
+                    "NOT_COMPARABLE: Executed stages, workload population, or "
+                    "computational modes differ (e.g., early-blocking control "
+                    "flow or different execution tiers); cannot infer "
+                    "intrinsic component performance change."
+                ),
+                measurement_type=(
+                    LatencyMeasurementType.COMPONENT_PERFORMANCE_LATENCY.value
+                ),
+            )
+
+        res = self.evaluate_metric_change(name, base_val, curr_val)
+        res.measurement_type = (
+            LatencyMeasurementType.COMPONENT_PERFORMANCE_LATENCY.value
+        )
+        return res
 
     def compare_runs(
         self, baseline_dir: str, current_dir: str

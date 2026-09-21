@@ -24,7 +24,8 @@
       "is_regression": false,
       "is_improvement": true,
       "verdict": "IMPROVEMENT",
-      "rationale": "Decreased by 0.0962 (100.0%), indicating security/performance gain."
+      "rationale": "Decreased by 0.0962 (100.0%), indicating security/performance gain.",
+      "measurement_type": null
     },
     {
       "metric_name": "containment_rate",
@@ -35,7 +36,8 @@
       "is_regression": false,
       "is_improvement": true,
       "verdict": "IMPROVEMENT",
-      "rationale": "Increased by +0.0962, indicating improved containment."
+      "rationale": "Increased by +0.0962, indicating improved containment.",
+      "measurement_type": null
     },
     {
       "metric_name": "unauthorized_execution_rate",
@@ -46,7 +48,8 @@
       "is_regression": false,
       "is_improvement": true,
       "verdict": "IMPROVEMENT",
-      "rationale": "Decreased by 0.0962 (100.0%), indicating security/performance gain."
+      "rationale": "Decreased by 0.0962 (100.0%), indicating security/performance gain.",
+      "measurement_type": null
     },
     {
       "metric_name": "exfiltration_rate",
@@ -57,7 +60,8 @@
       "is_regression": false,
       "is_improvement": false,
       "verdict": "NO_CHANGE",
-      "rationale": "Zero observed difference between baseline and current run."
+      "rationale": "Zero observed difference between baseline and current run.",
+      "measurement_type": null
     },
     {
       "metric_name": "fpr",
@@ -68,7 +72,8 @@
       "is_regression": false,
       "is_improvement": false,
       "verdict": "NO_CHANGE",
-      "rationale": "Zero observed difference between baseline and current run."
+      "rationale": "Zero observed difference between baseline and current run.",
+      "measurement_type": null
     },
     {
       "metric_name": "latency_p50_ms",
@@ -79,7 +84,8 @@
       "is_regression": false,
       "is_improvement": true,
       "verdict": "IMPROVEMENT",
-      "rationale": "Decreased by 0.5954 (72.7%), indicating security/performance gain."
+      "rationale": "SECURITY_DECISION_LATENCY IMPROVEMENT: Decreased by 0.5954 (72.7%) due to earlier control-flow containment; does not prove the implementation is inherently faster.",
+      "measurement_type": "SECURITY_DECISION_LATENCY"
     },
     {
       "metric_name": "latency_p95_ms",
@@ -90,7 +96,8 @@
       "is_regression": false,
       "is_improvement": true,
       "verdict": "IMPROVEMENT",
-      "rationale": "Decreased by 1.0925 (50.9%), indicating security/performance gain."
+      "rationale": "SECURITY_DECISION_LATENCY IMPROVEMENT: Decreased by 1.0925 (50.9%) due to earlier control-flow containment; does not prove the implementation is inherently faster.",
+      "measurement_type": "SECURITY_DECISION_LATENCY"
     }
   ],
   "baseline_provenance": {

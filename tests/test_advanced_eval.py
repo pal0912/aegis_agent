@@ -75,6 +75,7 @@ from evals.benchmark.regression_comparator import (
     CompatibilityCheckResult,
     CrossVersionComparator,
     CrossVersionComparisonReport,
+    LatencyMeasurementType,
     MetricRegressionEvaluation,
 )
 from evals.benchmark.repeated_trials import (
@@ -1969,5 +1970,130 @@ def test_regression_comparator_deterministic_verdicts():
     # Unknown metric with delta is NOT_COMPARABLE
     eval_unkn = comparator.evaluate_metric_change("unknown_metric", 1.0, 2.0)
     assert eval_unkn.verdict == "NOT_COMPARABLE"
+
+
+# ============================================================================
+# 68. test_early_blocking_not_intrinsic_performance_improvement
+# ============================================================================
+def test_early_blocking_not_intrinsic_performance_improvement():
+    """Proves changed early-blocking control flow cannot automatically be
+    interpreted as intrinsic performance improvement."""
+    comparator = CrossVersionComparator()
+    # Baseline executed full pipeline (0.82 ms), current blocked early (0.22 ms)
+    eval_lat = comparator.evaluate_metric_change("latency_p50_ms", 0.82, 0.22)
+    assert eval_lat.verdict == "IMPROVEMENT"
+    assert "SECURITY_DECISION_LATENCY IMPROVEMENT" in eval_lat.rationale
+    assert (
+        "does not prove the implementation is inherently faster"
+        in eval_lat.rationale
+    )
+    assert (
+        eval_lat.measurement_type
+        == LatencyMeasurementType.SECURITY_DECISION_LATENCY.value
+    )
+
+
+# ============================================================================
+# 69. test_pure_performance_different_stages_not_comparable
+# ============================================================================
+def test_pure_performance_different_stages_not_comparable():
+    """Proves identical timer + different executed stages => NOT_COMPARABLE
+    for pure performance regression analysis."""
+    comparator = CrossVersionComparator()
+    # Even if measured with the same timer and same scenario IDs, differing
+    # stages (e.g. early block vs downstream evaluation) must be classified as
+    # NOT_COMPARABLE for pure performance.
+    eval_diff_stages = comparator.evaluate_component_performance_latency(
+        "component_latency_p50_ms",
+        base_val=0.55,
+        curr_val=0.22,
+        same_workload_population=True,
+        same_execution_stages=False,  # different executed stages
+        same_measurement_methodology=True,
+        same_environment=True,
+        same_sample_semantics=True,
+    )
+    assert eval_diff_stages.verdict == "NOT_COMPARABLE"
+    assert eval_diff_stages.is_improvement is False
+    assert eval_diff_stages.is_regression is False
+
+    # Also test differing computational modes (REAL_HEURISTIC vs NEURAL)
+    eval_mode_mismatch = comparator.evaluate_component_performance_latency(
+        "component_latency_p50_ms",
+        base_val=0.0019,
+        curr_val=211.95,
+        base_execution_mode="REAL_HEURISTIC",
+        curr_execution_mode="REAL_NEURAL_INFERENCE",
+    )
+    assert eval_mode_mismatch.verdict == "NOT_COMPARABLE"
+
+
+# ============================================================================
+# 70. test_pure_performance_identical_workload_stages_classified
+# ============================================================================
+def test_pure_performance_identical_workload_stages_classified():
+    """Proves identical workload + identical stages => latency delta
+    classified according to configured regression thresholds."""
+    comparator = CrossVersionComparator()
+    # Identical workload, stages, methodology, environment, sample semantics
+    eval_comp_impr = comparator.evaluate_component_performance_latency(
+        "latency_p50_ms",
+        base_val=25.0,
+        curr_val=10.0,
+        same_workload_population=True,
+        same_execution_stages=True,
+        same_measurement_methodology=True,
+        same_environment=True,
+        same_sample_semantics=True,
+    )
+    assert eval_comp_impr.verdict == "IMPROVEMENT"
+    assert eval_comp_impr.is_improvement is True
+
+    # Regression case
+    eval_comp_regr = comparator.evaluate_component_performance_latency(
+        "latency_p50_ms",
+        base_val=10.0,
+        curr_val=30.0,
+        same_workload_population=True,
+        same_execution_stages=True,
+        same_measurement_methodology=True,
+        same_environment=True,
+        same_sample_semantics=True,
+    )
+    assert eval_comp_regr.verdict == "REGRESSION"
+    assert eval_comp_regr.is_regression is True
+
+
+# ============================================================================
+# 71. test_security_decision_latency_separated_from_component_performance
+# ============================================================================
+def test_security_decision_latency_separated_from_component_performance():
+    """Proves security-decision latency is reported separately from component
+    performance latency with distinct semantics."""
+    comparator = CrossVersionComparator()
+    # Scenario security decision latency
+    sec_lat = comparator.evaluate_metric_change("latency_p50_ms", 0.82, 0.22)
+    assert (
+        sec_lat.measurement_type
+        == LatencyMeasurementType.SECURITY_DECISION_LATENCY.value
+    )
+
+    # Pure component performance latency
+    comp_lat = comparator.evaluate_component_performance_latency(
+        "DETERMINISTIC_MIDDLEWARE_p50_ms",
+        base_val=0.42,
+        curr_val=0.28,
+        same_workload_population=True,
+        same_execution_stages=True,
+        same_measurement_methodology=True,
+        same_environment=True,
+        same_sample_semantics=True,
+    )
+    assert (
+        comp_lat.measurement_type
+        == LatencyMeasurementType.COMPONENT_PERFORMANCE_LATENCY.value
+    )
+    assert sec_lat.measurement_type != comp_lat.measurement_type
+
 
 
