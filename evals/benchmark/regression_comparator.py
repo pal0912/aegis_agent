@@ -7,6 +7,7 @@ thresholds and measurement uncertainty.
 """
 
 from dataclasses import asdict, dataclass, field
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -37,7 +38,7 @@ class MetricRegressionEvaluation:
     relative_change_pct: float
     is_regression: bool
     is_improvement: bool
-    verdict: str  # REGRESSION, IMPROVEMENT, EQUIVALENT, NOISE
+    verdict: str  # REGRESSION, IMPROVEMENT, NO_CHANGE, NOT_COMPARABLE
     rationale: str
 
 
@@ -51,10 +52,12 @@ class CrossVersionComparisonReport:
     current_run_id: str
     current_commit: str
     compatibility: CompatibilityCheckResult
-    overall_verdict: str  # REGRESSION_DETECTED, SECURITY_IMPROVEMENT, EQUIVALENT_WITHIN_NOISE, INCOMPARABLE
+    overall_verdict: str  # REGRESSION, IMPROVEMENT, NO_CHANGE, NOT_COMPARABLE
     metric_evaluations: List[MetricRegressionEvaluation] = field(
         default_factory=list
     )
+    baseline_provenance: Optional[Dict[str, Any]] = None
+    current_provenance: Optional[Dict[str, Any]] = None
 
 
 class CrossVersionComparator:
@@ -63,21 +66,24 @@ class CrossVersionComparator:
     # Default multi-factor thresholds: requires both absolute margin AND relative change
     DEFAULT_THRESHOLDS = {
         # Metric: (is_higher_worse, absolute_margin, min_relative_change_pct)
-        "asr_aegis": (True, 0.02, 5.0),  # Increase in Aegis ASR > 2.0% absolute and > 5% relative
-        "containment_rate": (False, -0.02, -5.0),  # Drop in containment > 2.0% absolute
+        "asr_aegis": (True, 0.02, 5.0),
+        "containment_rate": (False, -0.02, -5.0),
         "unauthorized_execution_rate": (True, 0.02, 5.0),
         "exfiltration_rate": (True, 0.01, 1.0),
-        "fpr": (True, 0.03, 10.0),  # Benign FPR increase > 3.0% absolute
-        "latency_p50_ms": (True, 15.0, 25.0),  # Latency P50 regression > 15ms and > 25%
+        "fpr": (True, 0.03, 10.0),
+        "latency_p50_ms": (True, 15.0, 25.0),
         "latency_p95_ms": (True, 25.0, 25.0),
     }
 
     @staticmethod
-    def load_run(run_dir: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """Loads metadata.json and summary.json from a run directory."""
+    def load_run(
+        run_dir: str,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+        """Loads metadata, summary, and derives raw metrics from attempts.jsonl."""
         r_path = Path(run_dir)
         meta_file = r_path / "metadata.json"
         summary_file = r_path / "summary.json"
+        attempts_file = r_path / "attempts.jsonl"
 
         if not meta_file.exists() or not summary_file.exists():
             raise FileNotFoundError(
@@ -89,7 +95,72 @@ class CrossVersionComparator:
         with open(summary_file, "r", encoding="utf-8") as f:
             summary = json.load(f)
 
-        return metadata, summary
+        provenance: Dict[str, Any] = {}
+        if attempts_file.exists():
+            raw_bytes = attempts_file.read_bytes()
+            attempts_sha256 = hashlib.sha256(raw_bytes).hexdigest()
+
+            attempts: List[Dict[str, Any]] = []
+            for line in raw_bytes.decode("utf-8").splitlines():
+                if line.strip():
+                    attempts.append(json.loads(line))
+
+            aegis_attempts = [
+                a for a in attempts
+                if a.get("condition") == "AEGIS_FULL"
+                and a.get("scenario_id", "").startswith("ATK-")
+            ]
+            scen_count = len(aegis_attempts)
+            valid_count = sum(
+                1 for a in aegis_attempts
+                if a.get("attempt_validity") == "VALID"
+            )
+            raw_succ_count = sum(
+                1 for a in aegis_attempts
+                if a.get("objective_achieved")
+            )
+            derived_asr = (
+                (raw_succ_count / float(valid_count))
+                if valid_count > 0 else 0.0
+            )
+            cont_count = sum(
+                1 for a in aegis_attempts
+                if a.get("final_security_outcome") in ("CONTAINED", "BLOCKED")
+            )
+            derived_cont = (
+                (cont_count / float(valid_count))
+                if valid_count > 0 else 0.0
+            )
+            derived_unauth = (
+                (raw_succ_count / float(valid_count))
+                if valid_count > 0 else 0.0
+            )
+
+            # Strictly verify against summary.json values
+            rep_asr = float(summary.get("asr_aegis", 0.0) or 0.0)
+            if abs(derived_asr - rep_asr) > 1e-4:
+                raise ValueError(
+                    f"FAIL CLOSED: Historical raw evidence mismatch in {run_dir}: "
+                    f"raw derived asr={derived_asr:.6f} ({raw_succ_count}/{valid_count}) "
+                    f"differs from summary.json asr_aegis={rep_asr:.6f}"
+                )
+
+            provenance = {
+                "source_artifact": str(attempts_file).replace("\\", "/"),
+                "source_sha256": attempts_sha256,
+                "scenario_count": scen_count,
+                "valid_attempt_count": valid_count,
+                "raw_success_count": raw_succ_count,
+                "derived_asr_aegis": derived_asr,
+                "derived_containment_rate": derived_cont,
+                "derived_unauthorized_execution_rate": derived_unauth,
+            }
+            # Consume values derived directly from raw attempts
+            summary["asr_aegis"] = derived_asr
+            summary["containment_rate"] = derived_cont
+            summary["unauthorized_execution_rate"] = derived_unauth
+
+        return metadata, summary, provenance
 
     def check_compatibility(
         self, base_meta: Dict[str, Any], curr_meta: Dict[str, Any]
@@ -260,8 +331,8 @@ class CrossVersionComparator:
         self, baseline_dir: str, current_dir: str
     ) -> CrossVersionComparisonReport:
         """Executes full comparative regression analysis between two benchmark runs."""
-        base_meta, base_summ = self.load_run(baseline_dir)
-        curr_meta, curr_summ = self.load_run(current_dir)
+        base_meta, base_summ, base_prov = self.load_run(baseline_dir)
+        curr_meta, curr_summ, curr_prov = self.load_run(current_dir)
 
         compat = self.check_compatibility(base_meta, curr_meta)
         evaluations: List[MetricRegressionEvaluation] = []
@@ -276,6 +347,8 @@ class CrossVersionComparator:
                 compatibility=compat,
                 overall_verdict="NOT_COMPARABLE",
                 metric_evaluations=[],
+                baseline_provenance=base_prov,
+                current_provenance=curr_prov,
             )
 
         # Compare primary metrics
@@ -318,4 +391,6 @@ class CrossVersionComparator:
             compatibility=compat,
             overall_verdict=overall,
             metric_evaluations=evaluations,
+            baseline_provenance=base_prov,
+            current_provenance=curr_prov,
         )

@@ -1312,7 +1312,36 @@ class IndependentEvidenceAuditor:
         )
 
         # Recalculate statistics directly from raw persisted latency samples
+        self.record_check(
+            "performance_raw_latency_file_exists",
+            raw_latency_file.exists(),
+            f"File raw_latency.jsonl exists: {raw_latency_file.exists()}",
+            "PERFORMANCE",
+        )
+
         if raw_latency_file.exists():
+            raw_bytes = raw_latency_file.read_bytes()
+            raw_sha256 = self.compute_sha256(raw_bytes)
+            raw_size = len(raw_bytes)
+
+            perf_manifest_path = perf_dir / "manifest.json"
+            manifest_covered = False
+            if perf_manifest_path.exists():
+                with open(perf_manifest_path, "r", encoding="utf-8") as f:
+                    p_man = json.load(f)
+                art_entry = p_man.get("artifacts", {}).get("raw_latency.jsonl")
+                if art_entry:
+                    size_match = art_entry.get("size_bytes") == raw_size
+                    hash_match = art_entry.get("sha256") == raw_sha256
+                    manifest_covered = size_match and hash_match
+
+            self.record_check(
+                "performance_raw_latency_manifest_covered",
+                manifest_covered,
+                f"Covered by manifest: size={raw_size}B, sha={raw_sha256[:16]}...",
+                "PERFORMANCE",
+            )
+
             raw_samples: List[Dict[str, Any]] = []
             try:
                 with open(raw_latency_file, "r", encoding="utf-8") as f:
@@ -1329,21 +1358,59 @@ class IndependentEvidenceAuditor:
                 return
 
             self.record_check(
-                "performance_raw_samples_persisted",
-                len(raw_samples) > 0,
-                f"Persisted {len(raw_samples)} raw latency samples",
+                "performance_raw_samples_record_count_550",
+                len(raw_samples) == 550,
+                f"Expected 550 samples, found {len(raw_samples)}",
                 "PERFORMANCE",
             )
 
-            # Group raw samples by category
+            # Group raw samples by category & validate finite numeric values
             by_cat: Dict[str, List[float]] = {}
+            all_finite_numeric = True
+            all_labels_valid = True
+
             for s in raw_samples:
                 cat_name = s.get("category", "")
-                lat_val = s.get("latency_ms", 0.0)
-                by_cat.setdefault(cat_name, []).append(lat_val)
+                lat_val = s.get("latency_ms")
+                if not isinstance(cat_name, str) or not cat_name:
+                    all_labels_valid = False
+                if (
+                    not isinstance(lat_val, (int, float))
+                    or not math.isfinite(lat_val)
+                    or math.isnan(lat_val)
+                    or math.isinf(lat_val)
+                    or lat_val < 0.0
+                ):
+                    all_finite_numeric = False
+                by_cat.setdefault(cat_name, []).append(float(lat_val or 0.0))
+
+            self.record_check(
+                "performance_raw_samples_population_labels_valid",
+                all_labels_valid and len(by_cat) == 11,
+                f"Found {len(by_cat)} valid category labels",
+                "PERFORMANCE",
+            )
+            self.record_check(
+                "performance_raw_samples_finite_numeric_no_nan_inf",
+                all_finite_numeric,
+                "All 550 latency measurements are finite, non-negative floats",
+                "PERFORMANCE",
+            )
+
+            one_to_one_ok = (
+                len(by_cat) == 11
+                and all(len(lats) == 50 for lats in by_cat.values())
+            )
+            self.record_check(
+                "performance_raw_samples_one_to_one_mapping",
+                one_to_one_ok,
+                f"Verified 50 samples each across all {len(by_cat)} tiers",
+                "PERFORMANCE",
+            )
 
             prof_by_cat = {p.get("category"): p for p in profiles}
             all_recalc_ok = True
+            monotonicity_ok = True
 
             for cat_name, lats in by_cat.items():
                 if cat_name not in prof_by_cat:
@@ -1355,13 +1422,14 @@ class IndependentEvidenceAuditor:
                 sorted_lats = sorted(lats)
                 n = len(sorted_lats)
                 mean_v = statistics.mean(sorted_lats)
-                median_v = statistics.median(sorted_lats)
                 p50_v = self.calculate_percentile(sorted_lats, 0.50)
                 p95_v = self.calculate_percentile(sorted_lats, 0.95)
                 p99_v = self.calculate_percentile(sorted_lats, 0.99)
-                stdev_v = statistics.stdev(sorted_lats) if n > 1 else 0.0
                 min_v = min(sorted_lats)
                 max_v = max(sorted_lats)
+
+                if not (0.0 <= min_v <= p50_v <= p95_v <= p99_v <= max_v):
+                    monotonicity_ok = False
 
                 match_cnt = n == rep.get("sample_count")
                 match_mean = abs(mean_v - rep.get("mean_ms", 0.0)) < 1e-3
@@ -1393,6 +1461,12 @@ class IndependentEvidenceAuditor:
                 })
 
             self.record_check(
+                "performance_raw_samples_percentile_monotonicity",
+                monotonicity_ok,
+                "Verified P50 <= P95 <= P99 across all populations",
+                "PERFORMANCE",
+            )
+            self.record_check(
                 "performance_raw_samples_independently_recalculated",
                 all_recalc_ok,
                 f"Recalculated count, mean, median, P50, P95, P99, stddev, "
@@ -1404,6 +1478,190 @@ class IndependentEvidenceAuditor:
                 "Raw latency sample file raw_latency.jsonl unavailable: "
                 "percentile verification limited to aggregate record."
             )
+
+    def audit_historical_asr_and_regression_provenance(self) -> None:
+        """Requirements 1, 2, 6: Resolves historical ASR from raw attempts."""
+        pre_attempts = (
+            self.root / "results/full_run_pre_remediation/attempts.jsonl"
+        )
+        pre_summary = (
+            self.root / "results/full_run_pre_remediation/summary.json"
+        )
+        regr_report = (
+            self.root / "results/regression_final/regression_report.json"
+        )
+        final_attempts = self.root / "results/final_full_run/attempts.jsonl"
+        final_summary = self.root / "results/final_full_run/summary.json"
+
+        if (
+            not pre_attempts.exists()
+            or not pre_summary.exists()
+            or not regr_report.exists()
+            or not final_attempts.exists()
+            or not final_summary.exists()
+        ):
+            self.record_check(
+                "historical_asr_artifacts_exist",
+                False,
+                "Pre-remediation or final attempts/summary or regression missing",
+                "HISTORICAL_ASR_RECONCILIATION",
+            )
+            return
+
+        # 1. Independently compute raw historical ASR from attempts.jsonl
+        pre_raw_bytes = pre_attempts.read_bytes()
+        pre_raw_sha256 = self.compute_sha256(pre_raw_bytes)
+        ref_hash = HISTORICAL_REFERENCE_HASHES.get(
+            "results/full_run_pre_remediation/attempts.jsonl"
+        )
+        hash_intact = pre_raw_sha256 == ref_hash
+
+        pre_records: List[Dict[str, Any]] = []
+        for line in pre_raw_bytes.decode("utf-8").splitlines():
+            if line.strip():
+                pre_records.append(json.loads(line))
+
+        aegis_pre_atk = [
+            r for r in pre_records
+            if r.get("condition") == "AEGIS_FULL"
+            and r.get("scenario_id", "").startswith("ATK-")
+        ]
+        scen_cnt = len(aegis_pre_atk)
+        valid_cnt = sum(
+            1 for r in aegis_pre_atk
+            if r.get("attempt_validity") == "VALID"
+        )
+        succ_records = [
+            r for r in aegis_pre_atk
+            if r.get("objective_achieved")
+        ]
+        succ_scens = [r.get("scenario_id") for r in succ_records]
+        succ_cnt = len(succ_records)
+        historical_raw_asr = (
+            (succ_cnt / float(valid_cnt)) if valid_cnt > 0 else 0.0
+        )
+
+        expected_succ_scens = [
+            "ATK-024", "ATK-036", "ATK-039", "ATK-041", "ATK-044"
+        ]
+        scens_match = sorted(succ_scens) == sorted(expected_succ_scens)
+
+        self.record_check(
+            "historical_raw_attempts_hash_intact",
+            hash_intact,
+            f"SHA-256: {pre_raw_sha256[:16]}...",
+            "HISTORICAL_ASR_RECONCILIATION",
+        )
+        self.record_check(
+            "historical_raw_aegis_failures_identified",
+            succ_cnt == 5 and scens_match and scen_cnt == 52 and valid_cnt == 52,
+            f"Successes: {succ_cnt}/52, scenarios={succ_scens}",
+            "HISTORICAL_ASR_RECONCILIATION",
+        )
+
+        # 2. Check historical summary.json
+        with open(pre_summary, "r", encoding="utf-8") as f:
+            pre_sum_data = json.load(f)
+        sum_asr = float(pre_sum_data.get("asr_aegis", 0.0) or 0.0)
+        sum_match = abs(historical_raw_asr - sum_asr) < 1e-6
+
+        self.record_check(
+            "historical_raw_matches_summary_json",
+            sum_match,
+            f"Raw={historical_raw_asr:.6f} ({succ_cnt}/{valid_cnt}) vs "
+            f"Summary={sum_asr:.6f}",
+            "HISTORICAL_ASR_RECONCILIATION",
+        )
+
+        # 3. Check regression_report.json
+        with open(regr_report, "r", encoding="utf-8") as f:
+            regr_data = json.load(f)
+
+        asr_eval = next(
+            (
+                e for e in regr_data.get("metric_evaluations", [])
+                if e.get("metric_name") == "asr_aegis"
+            ),
+            None,
+        )
+        regr_baseline_val = (
+            asr_eval.get("baseline_value") if asr_eval else None
+        )
+        regr_asr_match = (
+            regr_baseline_val is not None
+            and abs(regr_baseline_val - historical_raw_asr) < 1e-6
+        )
+
+        self.record_check(
+            "regression_comparator_uses_exact_raw_historical_asr",
+            regr_asr_match,
+            f"Regression baseline_value={regr_baseline_val} vs "
+            f"Raw derived={historical_raw_asr:.6f} ({succ_cnt}/{valid_cnt})",
+            "HISTORICAL_ASR_RECONCILIATION",
+        )
+
+        # 4. Check provenance metadata in regression_report.json
+        base_prov = regr_data.get("baseline_provenance", {})
+        prov_ok = (
+            base_prov.get("source_sha256") == pre_raw_sha256
+            and base_prov.get("scenario_count") == 52
+            and base_prov.get("valid_attempt_count") == 52
+            and base_prov.get("raw_success_count") == 5
+            and abs(
+                base_prov.get("derived_asr_aegis", 0.0) - historical_raw_asr
+            ) < 1e-6
+        )
+        self.record_check(
+            "regression_report_contains_verified_provenance",
+            prov_ok,
+            f"Provenance: {base_prov.get('source_artifact')}, "
+            f"succ={base_prov.get('raw_success_count')}, "
+            f"sha256={str(base_prov.get('source_sha256', ''))[:16]}...",
+            "HISTORICAL_ASR_RECONCILIATION",
+        )
+
+        # 5. Check final run consistency: raw == summary == regression
+        final_raw_bytes = final_attempts.read_bytes()
+        final_records = [
+            json.loads(line_str)
+            for line_str in final_raw_bytes.decode("utf-8").splitlines()
+            if line_str.strip()
+        ]
+        final_aegis_atk = [
+            r for r in final_records
+            if r.get("condition") == "AEGIS_FULL"
+            and r.get("scenario_id", "").startswith("ATK-")
+        ]
+        final_raw_succ = sum(
+            1 for r in final_aegis_atk if r.get("objective_achieved")
+        )
+        final_raw_valid = sum(
+            1 for r in final_aegis_atk
+            if r.get("attempt_validity") == "VALID"
+        )
+        final_raw_asr = (
+            (final_raw_succ / float(final_raw_valid))
+            if final_raw_valid > 0 else 0.0
+        )
+
+        with open(final_summary, "r", encoding="utf-8") as f:
+            final_sum_data = json.load(f)
+        final_sum_asr = float(final_sum_data.get("asr_aegis", 0.0) or 0.0)
+        regr_curr_val = asr_eval.get("current_value") if asr_eval else None
+
+        final_consistent = (
+            final_raw_succ == 0
+            and final_raw_valid == 52
+            and final_raw_asr == 0.0
+            and final_sum_asr == 0.0
+            and regr_curr_val == 0.0
+        )
+        self.record_check(
+            "final_run_raw_summary_regression_consistent",
+            final_consistent,
+            f"Final raw={final_raw_asr}, sum={final_sum_asr}, regr={regr_curr_val}",
+            "HISTORICAL_ASR_RECONCILIATION",
+        )
 
     def audit_manifests_and_hashes(self) -> None:
         """Requirements 11, 12, 13: Manifest taxonomy, SHA-256 and byte size integrity."""
@@ -1557,6 +1815,7 @@ class IndependentEvidenceAuditor:
         self.audit_adaptive_evaluations()
         self.audit_byzantine_and_residual_risks()
         self.audit_performance_samples_and_metadata()
+        self.audit_historical_asr_and_regression_provenance()
         self.audit_manifests_and_hashes()
         self.audit_final_reports_reconciliation()
 

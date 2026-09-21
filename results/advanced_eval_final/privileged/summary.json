@@ -1,6 +1,6 @@
 {
   "experiment_id": "ADAPTIVE_REDTEAM",
-  "run_id": "adaptive_e9e56467",
+  "run_id": "adaptive_c5f92af4",
   "observation_model": "PRIVILEGED_SECURITY_FEEDBACK",
   "scenario_count": 5,
   "total_adaptive_attempts": 25,

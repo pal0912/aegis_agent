@@ -92,5 +92,25 @@
       "verdict": "IMPROVEMENT",
       "rationale": "Decreased by 1.0925 (50.9%), indicating security/performance gain."
     }
-  ]
+  ],
+  "baseline_provenance": {
+    "source_artifact": "results/full_run_pre_remediation/attempts.jsonl",
+    "source_sha256": "4bc9d0817e33d8bbab74ad65c862921e72d0e2cf5a5cb35e390c4d138be5d6d3",
+    "scenario_count": 52,
+    "valid_attempt_count": 52,
+    "raw_success_count": 5,
+    "derived_asr_aegis": 0.09615384615384616,
+    "derived_containment_rate": 0.9038461538461539,
+    "derived_unauthorized_execution_rate": 0.09615384615384616
+  },
+  "current_provenance": {
+    "source_artifact": "results/final_full_run/attempts.jsonl",
+    "source_sha256": "93444b8fb45d086e4b505696b73d1b75b8161cb079a4a7bd11b6b9de5d45e45d",
+    "scenario_count": 52,
+    "valid_attempt_count": 52,
+    "raw_success_count": 0,
+    "derived_asr_aegis": 0.0,
+    "derived_containment_rate": 1.0,
+    "derived_unauthorized_execution_rate": 0.0
+  }
 }
