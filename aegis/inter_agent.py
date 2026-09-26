@@ -7,6 +7,7 @@ and taint propagation across distributed multi-agent workflows.
 
 import collections
 import logging
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -72,6 +73,7 @@ class InterAgentChannelGuard:
         sanitizer: Optional[ContextSanitizer] = None,
     ) -> None:
         """Initialize channel guard with identity keystore and anti-replay."""
+        self._lock = threading.RLock()
         self.identity_manager = identity_manager or AgentIdentityManager()
         self.sanitizer = sanitizer or ContextSanitizer()
         self._processed_message_ids: collections.OrderedDict[str, float] = (
@@ -282,10 +284,23 @@ class InterAgentChannelGuard:
         tracking_key = (
             f"{message.sender_id}:{message.receiver_id}:{message.message_id}"
         )
-        if (
-            message.message_id in self._processed_message_ids
-            or tracking_key in self._processed_message_ids
-        ):
+        with self._lock:
+            if (
+                message.message_id in self._processed_message_ids
+                or tracking_key in self._processed_message_ids
+            ):
+                is_replay = True
+            else:
+                is_replay = False
+                while (
+                    len(self._processed_message_ids) >= self.MAX_TRACKED_NONCES
+                ):
+                    self._processed_message_ids.popitem(last=False)
+                now_ts = time.time()
+                self._processed_message_ids[message.message_id] = now_ts
+                self._processed_message_ids[tracking_key] = now_ts
+
+        if is_replay:
             logger.warning(
                 "InterAgentChannelGuard: Replay attack detected for message "
                 "'%s'",
@@ -307,12 +322,6 @@ class InterAgentChannelGuard:
                 f"already consumed",
                 tainted_ctx,
             )
-
-        # Record message_id in processed anti-replay FIFO cache
-        if len(self._processed_message_ids) >= self.MAX_TRACKED_NONCES:
-            self._processed_message_ids.popitem(last=False)
-        self._processed_message_ids[message.message_id] = time.time()
-        self._processed_message_ids[tracking_key] = time.time()
 
         # 4. Verify delegation token if required or present
         if required_capability is not None or message.delegation_token:

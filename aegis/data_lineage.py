@@ -24,7 +24,12 @@ class DataLineageTracker:
     def compute_value_hash(self, value: Any) -> str:
         """Compute deterministic SHA-256 hash of a value."""
         if isinstance(value, (dict, list)):
-            canonical_str = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+            try:
+                canonical_str = json.dumps(
+                    value, sort_keys=True, separators=(",", ":"), default=str
+                )
+            except (ValueError, TypeError):
+                canonical_str = str(value)
         else:
             canonical_str = str(value)
         return hashlib.sha256(canonical_str.encode("utf-8")).hexdigest()
@@ -103,7 +108,23 @@ class DataLineageTracker:
         trust: FieldTrustLevel,
         source: str,
         prefix: str = "",
+        visited_ids: Optional[Set[int]] = None,
+        depth: int = 0,
+        max_depth: int = 50,
     ) -> Dict[str, FieldProvenance]:
+        if depth >= max_depth:
+            return {}
+
+        if visited_ids is None:
+            visited_ids = set()
+
+        if isinstance(data, (dict, list, tuple)):
+            obj_id = id(data)
+            if obj_id in visited_ids:
+                return {}
+            visited_ids = set(visited_ids)
+            visited_ids.add(obj_id)
+
         lineage_map: Dict[str, FieldProvenance] = {}
         now_ts = datetime.now(timezone.utc).isoformat()
         root_path = prefix if prefix else "root"
@@ -120,11 +141,31 @@ class DataLineageTracker:
         if isinstance(data, dict):
             for key, val in data.items():
                 child_path = f"{prefix}.{key}" if prefix else str(key)
-                lineage_map.update(self._tag_recursive(val, trust=trust, source=source, prefix=child_path))
+                lineage_map.update(
+                    self._tag_recursive(
+                        val,
+                        trust=trust,
+                        source=source,
+                        prefix=child_path,
+                        visited_ids=visited_ids,
+                        depth=depth + 1,
+                        max_depth=max_depth,
+                    )
+                )
         elif isinstance(data, (list, tuple)):
             for idx, item in enumerate(data):
                 child_path = f"{prefix}[{idx}]" if prefix else f"[{idx}]"
-                lineage_map.update(self._tag_recursive(item, trust=trust, source=source, prefix=child_path))
+                lineage_map.update(
+                    self._tag_recursive(
+                        item,
+                        trust=trust,
+                        source=source,
+                        prefix=child_path,
+                        visited_ids=visited_ids,
+                        depth=depth + 1,
+                        max_depth=max_depth,
+                    )
+                )
 
         return lineage_map
 

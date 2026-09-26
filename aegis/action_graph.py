@@ -6,6 +6,7 @@ to prevent covert action chaining (e.g., READ_PRIVATE -> NETWORK_EXTERNAL).
 
 from datetime import datetime, timezone
 import logging
+import threading
 from typing import Any, Dict, List, Optional, Set, Tuple
 import uuid
 
@@ -77,6 +78,7 @@ class ActionDependencyGraph:
 
     def __init__(self) -> None:
         """Initialize ActionDependencyGraph with per-session execution chains."""
+        self._lock = threading.RLock()
         self._graph: Dict[str, List[ActionNode]] = {}
 
     def record_node(
@@ -100,32 +102,38 @@ class ActionDependencyGraph:
             capability=capability,
             details=details or {},
         )
-        if session_id not in self._graph:
-            if len(self._graph) >= self.MAX_SESSIONS:
-                oldest_sid = next(iter(self._graph))
-                del self._graph[oldest_sid]
-            self._graph[session_id] = []
+        with self._lock:
+            if session_id not in self._graph:
+                if len(self._graph) >= self.MAX_SESSIONS:
+                    oldest_sid = next(iter(self._graph))
+                    del self._graph[oldest_sid]
+                self._graph[session_id] = []
 
-        self._graph[session_id].append(node)
-        if len(self._graph[session_id]) > self.MAX_NODES_PER_SESSION:
-            self._graph[session_id] = self._graph[session_id][-self.MAX_NODES_PER_SESSION:]
+            self._graph[session_id].append(node)
+            if len(self._graph[session_id]) > self.MAX_NODES_PER_SESSION:
+                self._graph[session_id] = self._graph[session_id][
+                    -self.MAX_NODES_PER_SESSION:
+                ]
+            chain_len = len(self._graph[session_id])
 
         logger.debug(
             "ActionGraph recorded node [%s] for session '%s' (chain length: %d)",
             capability.value,
             session_id,
-            len(self._graph[session_id]),
+            chain_len,
         )
         return node
 
     def get_history(self, session_id: str) -> List[Capability]:
         """Retrieve chronological sequence of executed capabilities for a session."""
-        nodes = self._graph.get(session_id, [])
+        with self._lock:
+            nodes = list(self._graph.get(session_id, []))
         return [node.capability for node in nodes]
 
     def get_nodes(self, session_id: str) -> List[ActionNode]:
         """Retrieve full chronological ActionNode list for a session."""
-        return list(self._graph.get(session_id, []))
+        with self._lock:
+            return list(self._graph.get(session_id, []))
 
     def evaluate_transition(
         self,
@@ -169,7 +177,8 @@ class ActionDependencyGraph:
 
     def clear(self, session_id: Optional[str] = None) -> None:
         """Clear action graph history."""
-        if session_id:
-            self._graph.pop(session_id, None)
-        else:
-            self._graph.clear()
+        with self._lock:
+            if session_id:
+                self._graph.pop(session_id, None)
+            else:
+                self._graph.clear()

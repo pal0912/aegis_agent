@@ -1,4 +1,5 @@
 import base64
+import collections
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 import hashlib
@@ -7,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import threading
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
@@ -50,7 +52,11 @@ class LiveValidationAuthorizer:
         return f"live_tok.{claims_b64}.{sig}"
 
     AUTHORIZED_BOOTSTRAP_TOKENS: set[str] = {"SEC_TOKEN_999"}
-    _used_nonces: set[str] = set()
+    MAX_TRACKED_NONCES: int = 50000
+    _lock = threading.RLock()
+    _used_nonces: collections.OrderedDict[str, float] = (
+        collections.OrderedDict()
+    )
 
     @classmethod
     def verify_token(
@@ -60,12 +66,12 @@ class LiveValidationAuthorizer:
         expected_environment: str = "live",
         secret_key: Optional[str] = None,
     ) -> Tuple[bool, str]:
-        """Verify that an operator token is authentic, unexpired, and bound to the exact scope and environment."""
+        """Verify operator token authenticity, scope, and replay freshness."""
         key = secret_key or cls.DEFAULT_SECRET
         if not token or not isinstance(token, str) or not token.strip():
             return False, "Token is missing or not a string."
 
-        # Support authorized bootstrap token for controlled testing and provisioning
+        # Support authorized bootstrap token for testing and provisioning
         if token in cls.AUTHORIZED_BOOTSTRAP_TOKENS:
             return True, "Authorized bootstrap operator token verified."
 
@@ -73,21 +79,42 @@ class LiveValidationAuthorizer:
             return False, "Malformed token prefix: must start with 'live_tok.'"
         parts = token.split(".")
         if len(parts) != 3:
-            return False, "Malformed token structure: must contain exactly 3 segments."
+            return (
+                False,
+                "Malformed token structure: must contain exactly 3 segments.",
+            )
         _, claims_b64, sig = parts
-        expected_sig = hmac.new(key.encode("utf-8"), claims_b64.encode("utf-8"), hashlib.sha256).hexdigest()
+        expected_sig = hmac.new(
+            key.encode("utf-8"), claims_b64.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
         if not hmac.compare_digest(sig, expected_sig):
-            return False, "Cryptographic signature verification failed (invalid secret or tampered token)."
+            return (
+                False,
+                "Cryptographic signature verification failed "
+                "(invalid secret or tampered token).",
+            )
         try:
-            claims = json.loads(base64.urlsafe_b64decode(claims_b64.encode("utf-8")).decode("utf-8"))
+            claims = json.loads(
+                base64.urlsafe_b64decode(claims_b64.encode("utf-8")).decode(
+                    "utf-8"
+                )
+            )
         except Exception as exc:
             return False, f"Token claims decode failure: {exc}"
 
         if claims.get("val_id") != validation_id:
-            return False, f"Token scope mismatch: issued for '{claims.get('val_id')}', presented for '{validation_id}'."
+            return (
+                False,
+                f"Token scope mismatch: issued for '{claims.get('val_id')}', "
+                f"presented for '{validation_id}'.",
+            )
 
         if claims.get("env") != expected_environment:
-            return False, f"Token environment mismatch: issued for '{claims.get('env')}', required '{expected_environment}'."
+            return (
+                False,
+                f"Token environment mismatch: issued for '{claims.get('env')}', "
+                f"required '{expected_environment}'.",
+            )
 
         if time.time() > claims.get("exp", 0):
             return False, f"Token expired at timestamp {claims.get('exp')}."
@@ -95,9 +122,17 @@ class LiveValidationAuthorizer:
         nonce = claims.get("nonce")
         if not nonce:
             return False, "Token missing replay prevention nonce."
-        if nonce in cls._used_nonces:
-            return False, f"Token replay detected: nonce '{nonce}' has already been consumed."
-        cls._used_nonces.add(nonce)
+
+        with cls._lock:
+            if nonce in cls._used_nonces:
+                return (
+                    False,
+                    f"Token replay detected: nonce '{nonce}' has already "
+                    f"been consumed.",
+                )
+            if len(cls._used_nonces) >= cls.MAX_TRACKED_NONCES:
+                cls._used_nonces.popitem(last=False)
+            cls._used_nonces[nonce] = time.time()
 
         return True, "Token verified."
 

@@ -142,11 +142,28 @@ class OutboundNetworkGuard:
                         val = int(p, 10)
                     parsed_parts.append(val)
 
-                if len(parsed_parts) == 4 and all(0 <= p <= 255 for p in parsed_parts):
+                if len(parsed_parts) == 4 and all(
+                    0 <= p <= 255 for p in parsed_parts
+                ):
                     return ipaddress.IPv4Address(
-                        f"{parsed_parts[0]}.{parsed_parts[1]}.{parsed_parts[2]}.{parsed_parts[3]}"
+                        f"{parsed_parts[0]}.{parsed_parts[1]}."
+                        f"{parsed_parts[2]}.{parsed_parts[3]}"
                     )
-                elif len(parsed_parts) == 2 and 0 <= parsed_parts[0] <= 255 and 0 <= parsed_parts[1] <= 0xFFFFFF:
+                elif len(parsed_parts) == 3 and (
+                    0 <= parsed_parts[0] <= 255
+                    and 0 <= parsed_parts[1] <= 255
+                    and 0 <= parsed_parts[2] <= 0xFFFF
+                ):
+                    val = (
+                        (parsed_parts[0] << 24)
+                        | (parsed_parts[1] << 16)
+                        | parsed_parts[2]
+                    )
+                    return ipaddress.IPv4Address(val)
+                elif len(parsed_parts) == 2 and (
+                    0 <= parsed_parts[0] <= 255
+                    and 0 <= parsed_parts[1] <= 0xFFFFFF
+                ):
                     val = (parsed_parts[0] << 24) | parsed_parts[1]
                     return ipaddress.IPv4Address(val)
             except Exception:

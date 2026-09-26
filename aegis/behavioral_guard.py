@@ -6,6 +6,7 @@ dangerous transitions (such as read-to-egress and reconnaissance chains) via det
 
 from collections import defaultdict
 import logging
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -29,22 +30,24 @@ class BehavioralGuard:
     ) -> None:
         self.max_sliding_window = max_sliding_window
         self.loop_threshold = loop_threshold
+        self._lock = threading.RLock()
         # Maps session_id to chronological action steps: List of (Capability, tool_name, timestamp)
         self.session_histories: Dict[str, List[Tuple[Capability, str, float]]] = {}
 
     def _append_step(self, session_id: str, capability: Capability, tool_name: str, ts: float) -> None:
         """Internal bounded append ensuring bounded memory consumption against DoS."""
-        if session_id not in self.session_histories:
-            if len(self.session_histories) >= self.MAX_ACTIVE_SESSIONS:
-                # Evict oldest session
-                oldest_sid = next(iter(self.session_histories))
-                del self.session_histories[oldest_sid]
-            self.session_histories[session_id] = []
+        with self._lock:
+            if session_id not in self.session_histories:
+                if len(self.session_histories) >= self.MAX_ACTIVE_SESSIONS:
+                    # Evict oldest session
+                    oldest_sid = next(iter(self.session_histories))
+                    del self.session_histories[oldest_sid]
+                self.session_histories[session_id] = []
 
-        history = self.session_histories[session_id]
-        history.append((capability, tool_name, ts))
-        if len(history) > self.MAX_STEPS_PER_SESSION:
-            self.session_histories[session_id] = history[-self.MAX_STEPS_PER_SESSION:]
+            history = self.session_histories[session_id]
+            history.append((capability, tool_name, ts))
+            if len(history) > self.MAX_STEPS_PER_SESSION:
+                self.session_histories[session_id] = history[-self.MAX_STEPS_PER_SESSION:]
 
     def record_step(self, session_id: str, capability: Capability, tool_name: str) -> None:
         """Explicitly record an executed action step into session history."""
@@ -52,12 +55,14 @@ class BehavioralGuard:
 
     def get_history(self, session_id: str) -> List[Tuple[Capability, str, float]]:
         """Retrieve action history for a session."""
-        return list(self.session_histories.get(session_id, []))
+        with self._lock:
+            return list(self.session_histories.get(session_id, []))
 
     def clear_session(self, session_id: str) -> None:
         """Clear action history for a session."""
-        if session_id in self.session_histories:
-            del self.session_histories[session_id]
+        with self._lock:
+            if session_id in self.session_histories:
+                del self.session_histories[session_id]
 
     def reset_session(self, session_id: str) -> None:
         """Reset / clear action history for a session."""

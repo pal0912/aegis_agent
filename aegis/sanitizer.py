@@ -5,6 +5,7 @@ escapes internal XML boundary collision tokens, and strictly encapsulates third-
 """
 
 import hashlib
+import html
 import re
 from typing import Any, Optional
 
@@ -96,6 +97,19 @@ class ContextSanitizer:
         safe_text = self._opening_tag_breakout_regex.sub(_escape_opening, safe_text)
         return safe_text
 
+    def escape_attribute(self, value: Any) -> str:
+        """Escape XML attribute values against quotes and delimiter injection.
+
+        Args:
+            value: Attribute value string.
+
+        Returns:
+            Attribute value with quotes and delimiters escaped.
+        """
+        if value is None:
+            return ""
+        return html.escape(str(value), quote=True)
+
     def sanitize_and_encapsulate(self, text: Any, source_label: str) -> str:
         """Sanitize text, escape boundary breakouts, and encapsulate inside untrusted context.
 
@@ -112,11 +126,12 @@ class ContextSanitizer:
 
         # Compute deterministic SHA256 hash of the cleaned text payload
         content_hash = hashlib.sha256(hardened_text.encode("utf-8")).hexdigest()
+        escaped_source = self.escape_attribute(source_label)
 
         # Format encapsulated block
         encapsulated = (
             f"{self.DIRECTIVE}\n"
-            f'<untrusted_context source="{source_label}" hash="{content_hash}">\n'
+            f'<untrusted_context source="{escaped_source}" hash="{content_hash}">\n'
             f"{hardened_text}\n"
             f"</untrusted_context>"
         )

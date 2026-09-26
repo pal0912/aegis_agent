@@ -7,6 +7,7 @@ and deep system health/readiness monitoring.
 
 import json
 import logging
+import secrets
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Union
@@ -144,7 +145,7 @@ def create_gateway_app(
                 elif x_api_key:
                     token = x_api_key.strip()
 
-                if not token or token != api_key:
+                if not token or not secrets.compare_digest(token, api_key):
                     return JSONResponse(
                         status_code=status.HTTP_401_UNAUTHORIZED,
                         content={
